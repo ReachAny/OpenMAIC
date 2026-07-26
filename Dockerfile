@@ -19,7 +19,8 @@ RUN if [ -n "$APK_MIRROR" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
     fi
 
-RUN apk add --no-cache libc6-compatRUN corepack enable && corepack prepare pnpm@10.28.0 --activate
+RUN apk add --no-cache libc6-compat
+RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
 
