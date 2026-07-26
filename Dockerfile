@@ -1,8 +1,25 @@
-# ---- Stage 1: Base ----
-FROM node:22-alpine AS base
+# Registry/mirror overrides for builds behind a slow or blocked path to the
+# public endpoints. Defaults reproduce an unmodified upstream build.
+ARG BASE_REGISTRY=docker.io/library
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG APK_MIRROR=
 
-RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@10.28.0 --activate
+# ---- Stage 1: Base ----
+FROM ${BASE_REGISTRY}/node:22-alpine AS base
+
+ARG NPM_REGISTRY
+ARG APK_MIRROR
+ENV COREPACK_NPM_REGISTRY=$NPM_REGISTRY \
+    npm_config_registry=$NPM_REGISTRY
+
+# Fails rather than no-ops if the repositories file moves in a future Alpine:
+# a silent skip here reads as "mirror configured" while every apk call still
+# goes to dl-cdn.
+RUN if [ -n "$APK_MIRROR" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
+    fi
+
+RUN apk add --no-cache libc6-compatRUN corepack enable && corepack prepare pnpm@10.28.0 --activate
 
 WORKDIR /app
 
@@ -34,13 +51,19 @@ COPY --from=deps /app/public/vendor ./public/vendor
 RUN pnpm build
 
 # ---- Stage 4: Runner ----
-FROM node:22-alpine AS runner
+FROM ${BASE_REGISTRY}/node:22-alpine AS runner
+
+ARG APK_MIRROR
 
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
+
+RUN if [ -n "$APK_MIRROR" ]; then \
+      sed -i "s|dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; \
+    fi
 
 RUN apk add --no-cache libc6-compat cairo pango jpeg giflib librsvg
 

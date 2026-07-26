@@ -1,0 +1,27 @@
+name: Sync reachany/main to Yunxiao
+
+on:
+  push:
+    branches:
+      - reachany/main
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 必须拉全量历史，否则推送会缺 commit
+
+      - name: Push to Yunxiao Codeup
+        env:
+          YUNXIAO_REPO: ${{ secrets.YUNXIAO_REPO }} # codeup.aliyun.com/<组织ID>/OpenMAIC-fork.git（不带 https:// 和账号）
+          YUNXIAO_USER: ${{ secrets.YUNXIAO_USER }}
+          YUNXIAO_TOKEN: ${{ secrets.YUNXIAO_TOKEN }}
+        run: |
+          git remote add yunxiao "https://${YUNXIAO_USER}:${YUNXIAO_TOKEN}@${YUNXIAO_REPO}"
+          # 分支名与 reachacademy 的 .gitmodules `branch = reachany/main` 保持一致，
+          # 云效流水线按 SHA 检出 submodule，该 SHA 必须是本分支的祖先。
+          git push yunxiao HEAD:refs/heads/reachany/main --force
