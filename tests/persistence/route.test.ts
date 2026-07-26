@@ -178,4 +178,49 @@ describe('embedded persistence route', () => {
     expect(seen[0]?.body).toBe(JSON.stringify({ hello: 'world' }));
     expect(seen[1]?.method).toBe('DELETE');
   });
+
+  it('rejects an unknown stage selector instead of falling back to a schema', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://unused-in-this-test');
+    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
+    const { GET } = await import('@/app/api/persistence/[...path]/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/persistence/documents?stage=public'),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'PERSISTENCE_STAGE_UNKNOWN',
+        message: 'unknown persistence stage',
+      },
+    });
+  });
+
+  it('refuses writes to the published stage so authoring cannot rewrite released courseware', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://unused-in-this-test');
+    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
+    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
+    const poolFactory = vi.fn();
+
+    for (const method of ['PUT', 'POST', 'PATCH', 'DELETE']) {
+      const response = await handlePersistenceRequest(
+        new Request('http://localhost/api/persistence/documents/abc', {
+          method,
+          headers: { authorization: 'Bearer test-token', 'x-openmaic-stage': 'published' },
+        }),
+        { poolFactory: poolFactory as never },
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        error: {
+          code: 'PERSISTENCE_STAGE_READ_ONLY',
+          message: 'persistence stage "published" is read-only',
+        },
+      });
+    }
+    // Rejected before any connection is opened.
+    expect(poolFactory).not.toHaveBeenCalled();
+  });
 });

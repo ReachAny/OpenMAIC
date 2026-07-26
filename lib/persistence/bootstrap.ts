@@ -19,10 +19,14 @@ if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_PERSISTENCE === '1'
     }));
 
   const token = process.env.NEXT_PUBLIC_PERSISTENCE_TOKEN;
+  // Which copy this UI reads and writes. One deployment serves both, so the selector travels with
+  // the request; the server rejects writes to a read-only stage regardless of what is sent here.
+  const stage = process.env.NEXT_PUBLIC_OPENMAIC_STAGE;
   const headers = async (): Promise<Record<string, string>> => {
     const resolvedLearnerKey = await learnerKey();
     return {
       'x-learner-key': resolvedLearnerKey,
+      ...(stage ? { 'x-openmaic-stage': stage } : {}),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     };
   };

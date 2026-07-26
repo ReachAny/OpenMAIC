@@ -17,6 +17,51 @@ export const runtime = 'nodejs';
 
 const ROUTE_PREFIX = '/api/persistence';
 
+/**
+ * Stages are addressed per request rather than per process so one deployment can serve both the
+ * authoring copy and the published copy.
+ *
+ * `published` is served read-only: a single process can reach both schemas, so the separation that
+ * used to come from two differently-credentialed processes is enforced here instead. Without this
+ * the authoring UI could rewrite already-published courseware.
+ */
+const STAGE_SCHEMAS = {
+  draft: { schema: 'openmaic_draft', readOnly: false },
+  published: { schema: 'openmaic_published', readOnly: true },
+} as const;
+
+type StageName = keyof typeof STAGE_SCHEMAS;
+
+const DEFAULT_STAGE: StageName = 'draft';
+const STAGE_HEADER = 'x-openmaic-stage';
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function isStageName(value: string): value is StageName {
+  return Object.hasOwn(STAGE_SCHEMAS, value);
+}
+
+/**
+ * Pin the schema on the connection string rather than via PGOPTIONS.
+ *
+ * The document DDL and queries use unqualified table names, so which copy they resolve to is a
+ * property of the connection. Carrying it here means every connection the pool opens — including
+ * ones created later to replace a dropped one — lands on the same schema, and which copy a request
+ * reaches stops depending on how the process was launched.
+ */
+function withSearchPath(connectionString: string, schema: string): string {
+  const url = new URL(connectionString);
+  url.searchParams.set('options', `-c search_path=${schema}`);
+  return url.toString();
+}
+
+/** Resolve which copy a request addresses, defaulting to the authoring one. */
+function resolveStage(request: Request): StageName | undefined {
+  const requested =
+    new URL(request.url).searchParams.get('stage') ?? request.headers.get(STAGE_HEADER);
+  if (requested === null || requested === '') return DEFAULT_STAGE;
+  return isStageName(requested) ? requested : undefined;
+}
+
 type PoolFactory = (connectionString: string) => Pool;
 
 interface PersistenceHandlerState {
@@ -26,9 +71,21 @@ interface PersistenceHandlerState {
 
 const HANDLER_STATE_KEY = Symbol.for('openmaic.persistence-route.handler');
 const globalState = globalThis as typeof globalThis & {
-  [key: symbol]: PersistenceHandlerState | undefined;
+  [key: symbol]: Map<StageName, PersistenceHandlerState> | undefined;
 };
-const handlerState = (globalState[HANDLER_STATE_KEY] ??= {});
+const handlerStates = (globalState[HANDLER_STATE_KEY] ??= new Map<
+  StageName,
+  PersistenceHandlerState
+>());
+
+function handlerStateFor(stage: StageName): PersistenceHandlerState {
+  let state = handlerStates.get(stage);
+  if (state === undefined) {
+    state = {};
+    handlerStates.set(stage, state);
+  }
+  return state;
+}
 
 function jsonError(status: number, code: string, message: string): Response {
   return Response.json({ error: { code, message } }, { status });
@@ -37,10 +94,13 @@ function jsonError(status: number, code: string, message: string): Response {
 async function createPersistenceHandler(
   connectionString: string,
   poolFactory: PoolFactory,
+  stage: StageName,
 ): Promise<RequestListener> {
-  const pool = poolFactory(connectionString);
+  const { schema } = STAGE_SCHEMAS[stage];
+  const pool = poolFactory(withSearchPath(connectionString, schema));
   const queryable = pool as unknown as ConnectableQueryable;
   try {
+    await queryable.query(`CREATE SCHEMA IF NOT EXISTS ${schema}`);
     await ensureSchema(queryable);
     await ensureDocumentSchema(queryable);
     const withTransaction = nodePostgresTransaction(queryable);
@@ -67,21 +127,25 @@ async function createPersistenceHandler(
 function getPersistenceHandler(
   connectionString: string,
   poolFactory: PoolFactory,
+  stage: StageName,
 ): Promise<RequestListener> {
+  const handlerState = handlerStateFor(stage);
   if (handlerState.handlerPromise && handlerState.connectionString === connectionString) {
     return handlerState.handlerPromise;
   }
 
   handlerState.connectionString = connectionString;
-  const initialization = createPersistenceHandler(connectionString, poolFactory).catch((error) => {
-    // Do not poison the singleton with a rejected promise. createPersistenceHandler
-    // has already closed its failed pool, and the next request gets a clean retry.
-    if (handlerState.handlerPromise === initialization) {
-      handlerState.handlerPromise = undefined;
-      handlerState.connectionString = undefined;
-    }
-    throw error;
-  });
+  const initialization = createPersistenceHandler(connectionString, poolFactory, stage).catch(
+    (error) => {
+      // Do not poison the singleton with a rejected promise. createPersistenceHandler
+      // has already closed its failed pool, and the next request gets a clean retry.
+      if (handlerState.handlerPromise === initialization) {
+        handlerState.handlerPromise = undefined;
+        handlerState.connectionString = undefined;
+      }
+      throw error;
+    },
+  );
   handlerState.handlerPromise = initialization;
   return initialization;
 }
@@ -91,6 +155,10 @@ function nodeRequest(request: Request): IncomingMessage {
   const pathname = url.pathname.startsWith(ROUTE_PREFIX)
     ? url.pathname.slice(ROUTE_PREFIX.length) || '/'
     : url.pathname;
+  // The stage selector is consumed here; the storage handler must not see it as a query filter.
+  const search = new URLSearchParams(url.search);
+  search.delete('stage');
+  const query = search.toString();
   const body = request.body
     ? Readable.fromWeb(
         request.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
@@ -98,7 +166,7 @@ function nodeRequest(request: Request): IncomingMessage {
     : Readable.from([]);
   return Object.assign(body, {
     method: request.method,
-    url: `${pathname}${url.search}`,
+    url: `${pathname}${query === '' ? '' : `?${query}`}`,
     headers: Object.fromEntries(request.headers.entries()),
   }) as IncomingMessage;
 }
@@ -186,10 +254,22 @@ export async function handlePersistenceRequest(
     );
   }
 
+  const stage = resolveStage(request);
+  if (stage === undefined) {
+    return jsonError(400, 'PERSISTENCE_STAGE_UNKNOWN', 'unknown persistence stage');
+  }
+  if (STAGE_SCHEMAS[stage].readOnly && MUTATING_METHODS.has(request.method.toUpperCase())) {
+    return jsonError(
+      403,
+      'PERSISTENCE_STAGE_READ_ONLY',
+      `persistence stage "${stage}" is read-only`,
+    );
+  }
+
   try {
     const poolFactory = deps.poolFactory ?? ((value) => new Pool({ connectionString: value }));
     return await runNodeHandler(
-      await getPersistenceHandler(connectionString, poolFactory),
+      await getPersistenceHandler(connectionString, poolFactory, stage),
       request,
     );
   } catch (error) {
