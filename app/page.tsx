@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowUp,
@@ -99,6 +99,7 @@ function HomePage() {
   const { t } = useI18n();
   const { theme, setTheme } = useTheme();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const showVocationalTestUi = shouldShowVocationalTestUi();
   const [form, setForm] = useState<FormState>(initialFormState);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -385,6 +386,7 @@ function HomePage() {
 
       const sessionState = {
         sessionId: nanoid(),
+        requestedStageId: searchParams.get('stageId') ?? undefined,
         requirements,
         pdfText: '',
         pdfImages: [],

@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { OutlinesEditor } from '@/components/generation/outlines-editor';
 import { cn } from '@/lib/utils';
+import { resolveStageId } from '@/lib/stage-id';
 import { useStageStore } from '@/lib/store/stage';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
@@ -38,7 +39,6 @@ import {
   type ParsedDocumentPart,
 } from '@/lib/document/bundle';
 import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
-import { nanoid } from 'nanoid';
 import type { Stage } from '@/lib/types/stage';
 import type {
   SceneOutline,
@@ -561,8 +561,8 @@ function GenerationPreviewContent() {
         imageMapping = currentSession.imageMapping;
       }
 
-      // Create stage client-side
-      const stageId = nanoid(10);
+      // Create stage client-side, unless an embedding host pinned the id up front.
+      const stageId = resolveStageId(currentSession.requestedStageId);
       const stage: Stage = {
         id: stageId,
         name: extractTopicFromRequirement(currentSession.requirements.requirement),

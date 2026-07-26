@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid';
+import { resolveStageId } from '@/lib/stage-id';
 import { callLLM } from '@/lib/ai/llm';
 import { createStageAPI } from '@/lib/api/stage-api';
 import type { StageStore } from '@/lib/api/stage-api-types';
@@ -39,6 +39,8 @@ const log = createLogger('Classroom');
 
 export interface GenerateClassroomInput {
   requirement: string;
+  /** Stage id pinned by an embedding host; a local one is minted when absent. */
+  requestedStageId?: string;
   pdfContent?: { text: string; images: string[] };
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
@@ -377,7 +379,7 @@ export async function generateClassroom(
     agents = getDefaultAgents();
   }
 
-  const stageId = nanoid(10);
+  const stageId = resolveStageId(input.requestedStageId);
   const stage: Stage = {
     id: stageId,
     name: courseTitle || outlines[0]?.title || requirement.slice(0, 50),

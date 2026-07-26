@@ -11,6 +11,12 @@ import type {
 // Session state stored in sessionStorage
 export interface GenerationSessionState {
   sessionId: string;
+  /**
+   * Stage id supplied by an embedding host instead of minted here. Set when the
+   * homepage is opened with a `?stageId=` param, so the generated deck lands on
+   * an id the host already recorded and can navigate back to.
+   */
+  requestedStageId?: string;
   requirements: UserRequirements;
   pdfText: string;
   documentSources?: SessionDocumentSource[];
