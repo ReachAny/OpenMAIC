@@ -173,7 +173,14 @@ export function ProviderConfigPanel({
       const response = await fetch('/api/provider/probe-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseUrl: effectiveBaseUrl, apiKey, modelsUrl }),
+        // providerId lets the route use the operator's base URL and key for a
+        // server-configured provider; the browser never receives those.
+        body: JSON.stringify({
+          providerId: provider.id,
+          baseUrl: effectiveBaseUrl,
+          apiKey,
+          modelsUrl,
+        }),
       });
       const data = await response.json();
       if (response.ok && data.success) {
@@ -199,7 +206,7 @@ export function ProviderConfigPanel({
       setFetchStatus('error');
       setFetchMessage(t('settings.fetchModelsFailed'));
     }
-  }, [apiKey, effectiveBaseUrl, modelsUrl, onModelsFetched, t]);
+  }, [apiKey, effectiveBaseUrl, modelsUrl, onModelsFetched, provider.id, t]);
 
   const models = providersConfig[provider.id]?.models || [];
   const isServerConfigured = providersConfig[provider.id]?.isServerConfigured;
@@ -413,7 +420,11 @@ export function ProviderConfigPanel({
                   variant="outline"
                   size="sm"
                   onClick={handleFetchModels}
-                  disabled={fetchStatus === 'fetching' || (requiresApiKey && !apiKey)}
+                  // A managed provider's key lives on the server and is never sent here, so
+                  // requiring one in this field would leave the button permanently disabled.
+                  disabled={
+                    fetchStatus === 'fetching' || (requiresApiKey && !apiKey && !isServerConfigured)
+                  }
                   className="gap-1.5"
                 >
                   {fetchStatus === 'fetching' ? (
