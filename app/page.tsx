@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
+import { Suspense, useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -1476,5 +1476,9 @@ function ClassroomCard({
 }
 
 export default function Page() {
-  return <HomePage />;
+  return (
+    <Suspense fallback={null}>
+      <HomePage />
+    </Suspense>
+  );
 }
