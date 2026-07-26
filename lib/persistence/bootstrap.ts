@@ -19,9 +19,12 @@ if (typeof window !== 'undefined' && process.env.NEXT_PUBLIC_PERSISTENCE === '1'
     }));
 
   const token = process.env.NEXT_PUBLIC_PERSISTENCE_TOKEN;
-  // Which copy this UI reads and writes. One deployment serves both, so the selector travels with
-  // the request; the server rejects writes to a read-only stage regardless of what is sent here.
-  const stage = process.env.NEXT_PUBLIC_OPENMAIC_STAGE;
+  // Which copy this page reads and writes. Taken from the URL first so one deployment can serve
+  // both audiences — NEXT_PUBLIC_* is inlined at build time, so it cannot distinguish them.
+  // The server rejects writes to a read-only stage regardless of what is sent here.
+  const stage =
+    new URLSearchParams(window.location.search).get('stage') ??
+    process.env.NEXT_PUBLIC_OPENMAIC_STAGE;
   const headers = async (): Promise<Record<string, string>> => {
     const resolvedLearnerKey = await learnerKey();
     return {
