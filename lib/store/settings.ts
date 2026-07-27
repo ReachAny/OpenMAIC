@@ -84,6 +84,7 @@ export interface SettingsState {
       enabled: boolean;
       modelId?: string;
       customModels?: Array<{ id: string; name: string }>;
+      serverModels?: string[];
       providerOptions?: Record<string, unknown>;
       isServerConfigured?: boolean;
       /** Admin/server-level force-off (server-providers.yml / env). Overrides `enabled`. */
@@ -105,6 +106,7 @@ export interface SettingsState {
       enabled: boolean;
       modelId?: string;
       customModels?: Array<{ id: string; name: string }>;
+      serverModels?: string[];
       providerOptions?: Record<string, unknown>;
       isServerConfigured?: boolean;
       // Custom provider fields
@@ -143,6 +145,7 @@ export interface SettingsState {
       baseUrl: string;
       enabled: boolean;
       isServerConfigured?: boolean;
+      serverModels?: string[];
       customModels?: Array<{ id: string; name: string }>;
       replaceBuiltInModels?: boolean;
     }
@@ -158,6 +161,7 @@ export interface SettingsState {
       baseUrl: string;
       enabled: boolean;
       isServerConfigured?: boolean;
+      serverModels?: string[];
       customModels?: Array<{ id: string; name: string }>;
       replaceBuiltInModels?: boolean;
     }
@@ -426,12 +430,24 @@ function resolveSelectedLLMModel(
 
 function resolveMediaModels<T extends { id: string; name: string }>(
   builtInModels: T[],
-  config?: { customModels?: T[]; replaceBuiltInModels?: boolean },
-): T[] {
+  config?: {
+    customModels?: T[];
+    replaceBuiltInModels?: boolean;
+    isServerConfigured?: boolean;
+    serverModels?: string[];
+  },
+): Array<T | { id: string; name: string }> {
+  if (config?.isServerConfigured && config.serverModels?.length) {
+    return config.serverModels.map((id) => ({ id, name: id }));
+  }
   const customModels = config?.customModels ?? [];
   return config?.replaceBuiltInModels && customModels.length > 0
     ? customModels
     : [...builtInModels, ...customModels];
+}
+
+function modelAliasesToOptions(models?: string[]): Array<{ id: string; name: string }> {
+  return (models ?? []).map((id) => ({ id, name: id }));
 }
 
 function isUsableMediaProvider(
@@ -1396,17 +1412,17 @@ export const useSettingsStore = create<SettingsState>()(
           try {
             const res = await fetch('/api/server-providers');
             if (!res.ok) return;
-            // Managed providers expose only their allowed model list (LLM/image)
-            // and presence (the "managed" flag) — never a base URL.
+            // Managed providers expose only model aliases and presence (the
+            // "managed" flag) — never a base URL.
             const data = (await res.json()) as {
               providers: Record<string, { models?: string[] }>;
               // TTS additionally carries an optional `disabled` flag for
               // admin/server-level force-off (#665).
-              tts: Record<string, { disabled?: boolean }>;
-              asr: Record<string, Record<string, never>>;
+              tts: Record<string, { disabled?: boolean; models?: string[] }>;
+              asr: Record<string, { models?: string[] }>;
               pdf: Record<string, Record<string, never>>;
               image: Record<string, { models?: string[] }>;
-              video: Record<string, Record<string, never>>;
+              video: Record<string, { models?: string[] }>;
               webSearch: Record<string, Record<string, never>>;
               generation?: { parallelSceneConcurrency?: number };
             };
@@ -1474,16 +1490,29 @@ export const useSettingsStore = create<SettingsState>()(
                     ...newTTSConfig[key],
                     isServerConfigured: false,
                     serverDisabled: false,
+                    serverModels: undefined,
                   };
                 }
               }
               for (const [pid, info] of Object.entries(data.tts)) {
                 const key = pid as TTSProviderId;
                 if (newTTSConfig[key]) {
+                  const serverModels = info.models?.length ? info.models : undefined;
                   newTTSConfig[key] = {
                     ...newTTSConfig[key],
                     isServerConfigured: !info.disabled,
                     serverDisabled: info.disabled === true,
+                    serverModels: info.disabled ? undefined : serverModels,
+                    ...(serverModels && !info.disabled
+                      ? {
+                          modelId: resolveSelectedModel(
+                            newTTSConfig[key].modelId ||
+                              TTS_PROVIDERS[key as BuiltInTTSProviderId]?.defaultModelId ||
+                              '',
+                            modelAliasesToOptions(serverModels),
+                          ),
+                        }
+                      : {}),
                   };
                 }
               }
@@ -1496,15 +1525,28 @@ export const useSettingsStore = create<SettingsState>()(
                   newASRConfig[key] = {
                     ...newASRConfig[key],
                     isServerConfigured: false,
+                    serverModels: undefined,
                   };
                 }
               }
-              for (const pid of Object.keys(data.asr)) {
+              for (const [pid, info] of Object.entries(data.asr)) {
                 const key = pid as ASRProviderId;
                 if (newASRConfig[key]) {
+                  const serverModels = info.models?.length ? info.models : undefined;
                   newASRConfig[key] = {
                     ...newASRConfig[key],
                     isServerConfigured: true,
+                    serverModels,
+                    ...(serverModels
+                      ? {
+                          modelId: resolveSelectedModel(
+                            newASRConfig[key].modelId ||
+                              ASR_PROVIDERS[key as keyof typeof ASR_PROVIDERS]?.defaultModelId ||
+                              '',
+                            modelAliasesToOptions(serverModels),
+                          ),
+                        }
+                      : {}),
                   };
                 }
               }
@@ -1538,15 +1580,17 @@ export const useSettingsStore = create<SettingsState>()(
                   newImageConfig[key] = {
                     ...newImageConfig[key],
                     isServerConfigured: false,
+                    serverModels: undefined,
                   };
                 }
               }
-              for (const pid of Object.keys(data.image)) {
+              for (const [pid, info] of Object.entries(data.image)) {
                 const key = pid as ImageProviderId;
                 if (newImageConfig[key]) {
                   newImageConfig[key] = {
                     ...newImageConfig[key],
                     isServerConfigured: true,
+                    serverModels: info.models?.length ? info.models : undefined,
                   };
                 }
               }
@@ -1559,16 +1603,18 @@ export const useSettingsStore = create<SettingsState>()(
                   newVideoConfig[key] = {
                     ...newVideoConfig[key],
                     isServerConfigured: false,
+                    serverModels: undefined,
                   };
                 }
               }
               if (data.video) {
-                for (const pid of Object.keys(data.video)) {
+                for (const [pid, info] of Object.entries(data.video)) {
                   const key = pid as VideoProviderId;
                   if (newVideoConfig[key]) {
                     newVideoConfig[key] = {
                       ...newVideoConfig[key],
                       isServerConfigured: true,
+                      serverModels: info.models?.length ? info.models : undefined,
                     };
                   }
                 }
@@ -1768,7 +1814,10 @@ export const useSettingsStore = create<SettingsState>()(
                   !newImageConfig[state.imageProviderId]?.isServerConfigured
                 ) {
                   autoImageProvider = serverImageIds[0];
-                  const models = IMAGE_PROVIDERS[autoImageProvider]?.models;
+                  const models = resolveMediaModels(
+                    IMAGE_PROVIDERS[autoImageProvider]?.models ?? [],
+                    newImageConfig[autoImageProvider],
+                  );
                   if (models?.length) autoImageModel = models[0].id;
                 }
                 if (serverImageIds.length > 0 && !state.imageGenerationEnabled) {
@@ -1782,7 +1831,10 @@ export const useSettingsStore = create<SettingsState>()(
                   !newVideoConfig[state.videoProviderId]?.isServerConfigured
                 ) {
                   autoVideoProvider = serverVideoIds[0];
-                  const models = VIDEO_PROVIDERS[autoVideoProvider]?.models;
+                  const models = resolveMediaModels(
+                    VIDEO_PROVIDERS[autoVideoProvider]?.models ?? [],
+                    newVideoConfig[autoVideoProvider],
+                  );
                   if (models?.length) autoVideoModel = models[0].id;
                 }
                 if (serverVideoIds.length > 0 && !state.videoGenerationEnabled) {

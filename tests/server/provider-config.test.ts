@@ -494,6 +494,19 @@ pdf:
       expect(getServerTTSProviders()['openai-tts']).toEqual({});
     });
 
+    it('exposes a static TTS model allowlist and preserves an allowed selection', async () => {
+      vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
+      vi.stubEnv('TTS_OPENAI_MODELS', 'voice-a,voice-b');
+      const { getServerTTSProviders, resolveTTSModel } =
+        await import('@/lib/server/provider-config');
+
+      expect(getServerTTSProviders()['openai-tts']).toEqual({
+        models: ['voice-a', 'voice-b'],
+      });
+      expect(resolveTTSModel('openai-tts', 'voice-b')).toBe('voice-b');
+      expect(resolveTTSModel('openai-tts', 'unknown')).toBe('voice-a');
+    });
+
     it('force-disables a provider via TTS_<P>_ENABLED=false even when it has a key', async () => {
       vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
       vi.stubEnv('TTS_OPENAI_ENABLED', 'false');

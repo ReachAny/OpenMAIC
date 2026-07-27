@@ -53,12 +53,16 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
 
   const currentConfig = videoProvidersConfig[selectedProviderId];
   const currentProvider = VIDEO_PROVIDERS[selectedProviderId];
-  const builtInModels = currentProvider?.models || [];
-  const customModels = useMemo(
-    () => currentConfig?.customModels || [],
-    [currentConfig?.customModels],
-  );
   const isServerConfigured = !!currentConfig?.isServerConfigured;
+  const serverModels = currentConfig?.serverModels || [];
+  const modelsLocked = isServerConfigured && serverModels.length > 0;
+  const builtInModels = modelsLocked
+    ? serverModels.map((id) => ({ id, name: id }))
+    : currentProvider?.models || [];
+  const customModels = useMemo(
+    () => (modelsLocked ? [] : currentConfig?.customModels || []),
+    [currentConfig?.customModels, modelsLocked],
+  );
 
   const handleApiKeyChange = (apiKey: string) => {
     setVideoProviderConfig(selectedProviderId, { apiKey });
@@ -249,10 +253,12 @@ export function VideoSettings({ selectedProviderId }: VideoSettingsProps) {
       <div className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <Label className="text-base">{t('settings.models')}</Label>
-          <Button variant="outline" size="sm" onClick={handleOpenAddModel} className="gap-1.5">
-            <Plus className="h-3.5 w-3.5" />
-            {t('settings.addNewModel')}
-          </Button>
+          {!modelsLocked && (
+            <Button variant="outline" size="sm" onClick={handleOpenAddModel} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" />
+              {t('settings.addNewModel')}
+            </Button>
+          )}
         </div>
 
         <div className="space-y-1.5">

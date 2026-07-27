@@ -66,8 +66,16 @@ const TABS: Array<{ id: TabId; icon: LucideIcon; label: string }> = [
 
 function providerModels<T extends { id: string; name: string }>(
   builtInModels: T[],
-  config?: { customModels?: T[]; replaceBuiltInModels?: boolean },
-): T[] {
+  config?: {
+    customModels?: T[];
+    replaceBuiltInModels?: boolean;
+    isServerConfigured?: boolean;
+    serverModels?: string[];
+  },
+): Array<T | { id: string; name: string }> {
+  if (config?.isServerConfigured && config.serverModels?.length) {
+    return config.serverModels.map((id) => ({ id, name: id }));
+  }
   const customModels = config?.customModels || [];
   if (config?.replaceBuiltInModels && customModels.length > 0) {
     return customModels;

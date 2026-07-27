@@ -185,11 +185,11 @@ vi.stubGlobal('window', { localStorage: localStorageStub });
 /** Full server response shape */
 interface MockServerResponse {
   providers?: Record<string, { models?: string[]; baseUrl?: string }>;
-  tts?: Record<string, { baseUrl?: string; disabled?: boolean }>;
-  asr?: Record<string, { baseUrl?: string }>;
+  tts?: Record<string, { baseUrl?: string; disabled?: boolean; models?: string[] }>;
+  asr?: Record<string, { baseUrl?: string; models?: string[] }>;
   pdf?: Record<string, { baseUrl?: string }>;
-  image?: Record<string, { baseUrl?: string }>;
-  video?: Record<string, { baseUrl?: string }>;
+  image?: Record<string, { baseUrl?: string; models?: string[] }>;
+  video?: Record<string, { baseUrl?: string; models?: string[] }>;
   webSearch?: Record<string, { baseUrl?: string }>;
 }
 
@@ -1138,6 +1138,95 @@ describe('fetchServerProviders — Video stale selection', () => {
     expect(store.getState().videoModelId).toBe('doubao-seedance-2-0-260128');
     // Provider recovered but generation stays off — user enables manually
     expect(store.getState().videoGenerationEnabled).toBe(false);
+  });
+
+  it('replaces managed image and video catalogs with discovered aliases', async () => {
+    const store = await getStore();
+    store.setState({
+      imageProviderId: 'seedream',
+      imageModelId: 'doubao-seedream-5-0-260128',
+      videoProviderId: 'seedance',
+      videoModelId: 'doubao-seedance-2-0-260128',
+    });
+    mockServerResponse({
+      image: { seedream: { models: ['course-image-fast', 'course-image-quality'] } },
+      video: { seedance: { models: ['course-video-short', 'course-video-long'] } },
+    });
+
+    await store.getState().fetchServerProviders();
+
+    expect(store.getState().imageProvidersConfig.seedream.serverModels).toEqual([
+      'course-image-fast',
+      'course-image-quality',
+    ]);
+    expect(store.getState().imageModelId).toBe('course-image-fast');
+    expect(store.getState().videoProvidersConfig.seedance.serverModels).toEqual([
+      'course-video-short',
+      'course-video-long',
+    ]);
+    expect(store.getState().videoModelId).toBe('course-video-short');
+  });
+
+  it('stores discovered TTS and ASR aliases as selectable models and falls back to the first', async () => {
+    const store = await getStore();
+    store.setState({
+      ttsProviderId: 'openai-tts',
+      asrProviderId: 'openai-whisper',
+      ttsProvidersConfig: {
+        ...store.getState().ttsProvidersConfig,
+        'openai-tts': {
+          ...store.getState().ttsProvidersConfig['openai-tts'],
+          modelId: 'stale-tts-model',
+        },
+      },
+      asrProvidersConfig: {
+        ...store.getState().asrProvidersConfig,
+        'openai-whisper': {
+          ...store.getState().asrProvidersConfig['openai-whisper'],
+          modelId: 'stale-asr-model',
+        },
+      },
+    });
+    mockServerResponse({
+      tts: { 'openai-tts': { models: ['course-voice-a', 'course-voice-b'] } },
+      asr: { 'openai-whisper': { models: ['course-transcribe-a'] } },
+    });
+
+    await store.getState().fetchServerProviders();
+
+    expect(store.getState().ttsProvidersConfig['openai-tts']).toMatchObject({
+      serverModels: ['course-voice-a', 'course-voice-b'],
+      modelId: 'course-voice-a',
+    });
+    expect(store.getState().asrProvidersConfig['openai-whisper']).toMatchObject({
+      serverModels: ['course-transcribe-a'],
+      modelId: 'course-transcribe-a',
+    });
+  });
+
+  it('leaves unmanaged BYOK media model customization unchanged', async () => {
+    const store = await getStore();
+    const customModels = [{ id: 'byok-image-model', name: 'BYOK Image Model' }];
+    store.setState({
+      imageProvidersConfig: {
+        ...store.getState().imageProvidersConfig,
+        seedream: {
+          ...store.getState().imageProvidersConfig.seedream,
+          apiKey: 'client-key',
+          customModels,
+          replaceBuiltInModels: true,
+        },
+      },
+    });
+    mockServerResponse({});
+
+    await store.getState().fetchServerProviders();
+
+    expect(store.getState().imageProvidersConfig.seedream).toMatchObject({
+      isServerConfigured: false,
+      customModels,
+      replaceBuiltInModels: true,
+    });
   });
 });
 

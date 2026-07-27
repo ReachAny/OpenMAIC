@@ -39,6 +39,12 @@ describe('buildModelsUrlCandidates', () => {
     ).toEqual(['https://x.com/custom/models']);
   });
 
+  it('appends a requested model mode to every candidate', () => {
+    expect(
+      buildModelsUrlCandidates('https://api.example.com/v1', { mode: 'image_generation' }),
+    ).toEqual(['https://api.example.com/v1/models?mode=image_generation']);
+  });
+
   it('base ending exactly in a compat suffix → strips it and appends fallbacks', () => {
     // Suffix-strip only triggers when the base ENDS with the suffix.
     const c = buildModelsUrlCandidates('https://api.minimaxi.com/anthropic');
@@ -177,5 +183,62 @@ describe('fetchModels', () => {
     expect(error).toMatchObject({ status });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(text).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an exact mode-aware catalog and preserves the mode metadata', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'image-alias',
+                owned_by: 'litellm',
+                mode: 'image_generation',
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    await expect(
+      fetchModels('https://api.example.com/v1', 'test-key', { mode: 'image_generation' }),
+    ).resolves.toEqual([{ id: 'image-alias', ownedBy: 'litellm', mode: 'image_generation' }]);
+  });
+
+  it('rejects a mode query that was ignored by a plain OpenAI models endpoint', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'chat-model', owned_by: 'provider' }] }), {
+          status: 200,
+        }),
+      ),
+    );
+
+    const error = await fetchModels('https://api.example.com/v1', 'test-key', {
+      mode: 'video_generation',
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ModelFetchError);
+    expect(error).toMatchObject({ status: 422 });
+  });
+
+  it('rejects models tagged with a different mode', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ data: [{ id: 'wrong-model', mode: 'chat' }] }), {
+          status: 200,
+        }),
+      ),
+    );
+
+    await expect(
+      fetchModels('https://api.example.com/v1', 'test-key', { mode: 'audio_speech' }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 });

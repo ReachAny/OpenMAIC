@@ -33,6 +33,22 @@ describe('getEnabledProvidersWithVoices', () => {
     expect(ids).not.toContain('lemonade-tts');
     expect(ids).not.toContain('browser-native-tts');
   });
+
+  it('replaces built-in TTS model groups with managed aliases', () => {
+    const providers = getEnabledProvidersWithVoices({
+      'openai-tts': {
+        enabled: true,
+        isServerConfigured: true,
+        serverModels: ['course-voice-a', 'course-voice-b'],
+      },
+    });
+
+    expect(providers[0].modelGroups.map((group) => group.modelId)).toEqual([
+      'course-voice-a',
+      'course-voice-b',
+    ]);
+    expect(providers[0].modelGroups.every((group) => group.voices.length > 0)).toBe(true);
+  });
 });
 
 describe('resolveAgentVoice', () => {

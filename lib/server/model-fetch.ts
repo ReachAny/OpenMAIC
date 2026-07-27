@@ -13,6 +13,7 @@ import { fetchWithTimeout } from './fetch-with-timeout';
 export interface FetchedModel {
   id: string;
   ownedBy?: string;
+  mode?: string;
 }
 
 /**
@@ -67,10 +68,10 @@ function stripCompatSuffix(baseUrl: string): string | null {
  */
 export function buildModelsUrlCandidates(
   baseUrl: string,
-  opts: { modelsUrlOverride?: string } = {},
+  opts: { modelsUrlOverride?: string; mode?: string } = {},
 ): string[] {
   const override = opts.modelsUrlOverride?.trim();
-  if (override) return [override];
+  if (override) return [appendModeQuery(override, opts.mode)];
 
   const trimmed = baseUrl.trim().replace(/\/+$/, '');
   if (!trimmed) throw new Error('Base URL is empty');
@@ -96,11 +97,20 @@ export function buildModelsUrlCandidates(
   }
 
   // Linear dedupe preserving first occurrence (≤4 candidates).
-  return candidates.filter((url, i) => candidates.indexOf(url) === i);
+  return candidates
+    .filter((url, i) => candidates.indexOf(url) === i)
+    .map((url) => appendModeQuery(url, opts.mode));
 }
 
 interface ModelsApiResponse {
-  data?: Array<{ id: string; owned_by?: string }>;
+  data?: Array<{ id: string; owned_by?: string; mode?: string }>;
+}
+
+function appendModeQuery(url: string, mode?: string): string {
+  const normalizedMode = mode?.trim();
+  if (!normalizedMode) return url;
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}mode=${encodeURIComponent(normalizedMode)}`;
 }
 
 /**
@@ -114,7 +124,7 @@ interface ModelsApiResponse {
 export async function fetchModels(
   baseUrl: string,
   apiKey: string,
-  opts: { modelsUrlOverride?: string } = {},
+  opts: { modelsUrlOverride?: string; mode?: string } = {},
 ): Promise<FetchedModel[]> {
   const candidates = buildModelsUrlCandidates(baseUrl, opts);
 
@@ -135,9 +145,18 @@ export async function fetchModels(
 
     if (res.ok) {
       const body = (await res.json()) as ModelsApiResponse;
-      return (body.data ?? [])
-        .map((m) => ({ id: m.id, ownedBy: m.owned_by }))
-        .sort((a, b) => a.id.localeCompare(b.id));
+      const models = (body.data ?? []).map((m) => ({
+        id: m.id,
+        ownedBy: m.owned_by,
+        ...(m.mode ? { mode: m.mode } : {}),
+      }));
+      if (opts.mode && models.some((model) => model.mode !== opts.mode)) {
+        throw new ModelFetchError(
+          422,
+          `The model endpoint did not return an exact ${opts.mode} catalog`,
+        );
+      }
+      return models.sort((a, b) => a.id.localeCompare(b.id));
     }
 
     if (res.status === 404 || res.status === 405) {

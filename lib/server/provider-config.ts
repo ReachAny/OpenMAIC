@@ -504,11 +504,14 @@ export function resolveProxy(providerId: string): string | undefined {
  * providers (`{ disabled: true }`). A force-disabled provider is reported as
  * disabled even when it is otherwise configured — disable wins (#665).
  */
-export function getServerTTSProviders(): Record<string, { disabled?: boolean }> {
+export function getServerTTSProviders(): Record<string, { disabled?: boolean; models?: string[] }> {
   const cfg = getConfig();
-  const result: Record<string, { disabled?: boolean }> = {};
-  for (const id of Object.keys(cfg.tts)) result[id] = {};
-  for (const id of cfg.ttsDisabled) result[id] = { disabled: true };
+  const result: Record<string, { disabled?: boolean; models?: string[] }> = {};
+  for (const [id, entry] of Object.entries(cfg.tts)) {
+    result[id] = {};
+    if (entry.models && entry.models.length > 0) result[id].models = entry.models;
+  }
+  for (const id of cfg.ttsDisabled) result[id] = { ...result[id], disabled: true };
   return result;
 }
 
@@ -526,14 +529,15 @@ export function resolveTTSBaseUrl(providerId: string, clientBaseUrl?: string): s
 }
 
 /**
- * Resolve the TTS model. A managed provider may pin its model server-side
- * (`${PREFIX}_MODELS`, first entry) — authoritative like its key/baseUrl, since
- * the managed-provider UI does not expose a model field. Otherwise the client
- * model wins.
+ * Resolve the TTS model. A managed provider may define an allowlist through
+ * `${PREFIX}_MODELS`; a selected allowlisted model is preserved, while a
+ * missing or invalid selection falls back to the first operator model.
  */
 export function resolveTTSModel(providerId: string, clientModel?: string): string | undefined {
   const entry = getConfig().tts[providerId];
-  if (entry?.models && entry.models.length > 0) return entry.models[0];
+  if (entry?.models && entry.models.length > 0) {
+    return clientModel && entry.models.includes(clientModel) ? clientModel : entry.models[0];
+  }
   return clientModel;
 }
 
@@ -541,9 +545,14 @@ export function resolveTTSModel(providerId: string, clientModel?: string): strin
 // Public API — ASR
 // ---------------------------------------------------------------------------
 
-/** Returns server-configured ASR providers (managed flag only, no base URLs). */
-export function getServerASRProviders(): Record<string, Record<string, never>> {
-  return Object.fromEntries(Object.keys(getConfig().asr).map((id) => [id, {}]));
+/** Returns server-configured ASR providers (allowed models only, no base URLs). */
+export function getServerASRProviders(): Record<string, { models?: string[] }> {
+  const result: Record<string, { models?: string[] }> = {};
+  for (const [id, entry] of Object.entries(getConfig().asr)) {
+    result[id] = {};
+    if (entry.models && entry.models.length > 0) result[id].models = entry.models;
+  }
+  return result;
 }
 
 export function resolveASRApiKey(providerId: string, clientKey?: string): string {
@@ -601,9 +610,14 @@ export function resolveImageBaseUrl(
 // Public API — Video Generation
 // ---------------------------------------------------------------------------
 
-/** Returns server-configured video providers (managed flag only, no base URLs). */
-export function getServerVideoProviders(): Record<string, Record<string, never>> {
-  return Object.fromEntries(Object.keys(getConfig().video).map((id) => [id, {}]));
+/** Returns server-configured video providers (allowed models only, no base URLs). */
+export function getServerVideoProviders(): Record<string, { models?: string[] }> {
+  const result: Record<string, { models?: string[] }> = {};
+  for (const [id, entry] of Object.entries(getConfig().video)) {
+    result[id] = {};
+    if (entry.models && entry.models.length > 0) result[id].models = entry.models;
+  }
+  return result;
 }
 
 export function resolveVideoApiKey(providerId: string, clientKey?: string): string {

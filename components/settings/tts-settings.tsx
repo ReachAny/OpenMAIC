@@ -90,6 +90,9 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
   const isCustom = isCustomTTSProvider(selectedProviderId);
   const providerConfig = ttsProvidersConfig[selectedProviderId];
   const isServerConfigured = !!providerConfig?.isServerConfigured;
+  const managedModels = isServerConfigured
+    ? (providerConfig?.serverModels || []).map((id) => ({ id, name: id }))
+    : [];
   // Per-provider enablement (#665): the toggle is meaningful only for an
   // AVAILABLE provider (configured / server-managed). An unconfigured provider
   // can't be "enabled" into the picker, so its toggle is disabled. Server
@@ -532,8 +535,30 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
         </div>
       )}
 
+      {/* Managed model selection */}
+      {managedModels.length > 0 && !isVoxCPM && (
+        <div className="space-y-2">
+          <Label className="text-sm">{t('settings.defaultModel')}</Label>
+          <Select
+            value={providerConfig?.modelId || managedModels[0].id}
+            onValueChange={(modelId) => setTTSProviderConfig(selectedProviderId, { modelId })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {managedModels.map((model) => (
+                <SelectItem key={model.id} value={model.id}>
+                  {model.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
       {/* Available Models */}
-      {ttsProvider?.models?.length > 0 && !isVoxCPM && (
+      {managedModels.length === 0 && ttsProvider?.models?.length > 0 && !isVoxCPM && (
         <div className="space-y-2">
           <Label className="text-sm text-muted-foreground">{t('settings.availableModels')}</Label>
           <div className="flex flex-wrap gap-2">

@@ -18,6 +18,7 @@ import {
 } from './adapters/minimax-video-adapter';
 import { generateWithGrokVideo, testGrokVideoConnectivity } from './adapters/grok-video-adapter';
 import { generateWithHappyHorse, testHappyHorseConnectivity } from './adapters/happyhorse-adapter';
+import { generateWithSora, testSoraConnectivity } from './adapters/sora-adapter';
 
 export const VIDEO_PROVIDERS: Record<VideoProviderId, VideoProviderConfig> = {
   seedance: {
@@ -140,6 +141,8 @@ export async function testVideoConnectivity(
       return testKlingConnectivity(config);
     case 'veo':
       return testVeoConnectivity(config);
+    case 'sora':
+      return testSoraConnectivity(config);
     case 'minimax-video':
       return testMiniMaxVideoConnectivity(config);
     case 'grok-video':
@@ -207,6 +210,8 @@ export async function generateVideo(
       return generateWithKling(config, options);
     case 'veo':
       return generateWithVeo(config, options);
+    case 'sora':
+      return generateWithSora(config, options);
     case 'minimax-video':
       return generateWithMiniMaxVideo(config, options);
     case 'grok-video':

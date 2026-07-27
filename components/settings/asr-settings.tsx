@@ -50,6 +50,10 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
   const isCustom = isCustomASRProvider(selectedProviderId);
   const providerConfig = asrProvidersConfig[selectedProviderId];
   const isServerConfigured = !!providerConfig?.isServerConfigured;
+  const availableModels =
+    isServerConfigured && providerConfig?.serverModels?.length
+      ? providerConfig.serverModels.map((id) => ({ id, name: id }))
+      : asrProvider?.models || [];
   const requiresApiKey = isCustom
     ? !!providerConfig?.requiresApiKey
     : !!asrProvider?.requiresApiKey;
@@ -358,18 +362,22 @@ export function ASRSettings({ selectedProviderId }: ASRSettingsProps) {
       )}
 
       {/* Model Selection — built-in providers */}
-      {!isCustom && asrProvider?.models?.length > 0 && (
+      {!isCustom && availableModels.length > 0 && (
         <div className="space-y-2">
           <Label className="text-sm">{t('settings.defaultModel')}</Label>
           <Select
-            value={asrProvidersConfig[selectedProviderId]?.modelId || asrProvider?.defaultModelId}
+            value={
+              asrProvidersConfig[selectedProviderId]?.modelId ||
+              availableModels[0]?.id ||
+              asrProvider?.defaultModelId
+            }
             onValueChange={(value) => setASRProviderConfig(selectedProviderId, { modelId: value })}
           >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {asrProvider?.models.map((model) => (
+              {availableModels.map((model) => (
                 <SelectItem key={model.id} value={model.id}>
                   {model.name}
                 </SelectItem>

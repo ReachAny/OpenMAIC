@@ -141,6 +141,7 @@ export function getEnabledProvidersWithVoices(
     string,
     TTSEnablementConfig & {
       modelId?: string;
+      serverModels?: string[];
       providerOptions?: Record<string, unknown>;
       customName?: string;
     }
@@ -184,10 +185,18 @@ export function getEnabledProvidersWithVoices(
 
       // Build model groups
       const modelGroups: ModelVoiceGroup[] = [];
-      if (config.models.length > 0) {
-        for (const model of config.models) {
+      const managedModels =
+        providerConfig?.isServerConfigured && providerConfig.serverModels?.length
+          ? providerConfig.serverModels.map((id) => ({ id, name: id }))
+          : undefined;
+      const availableModels = managedModels ?? config.models;
+      if (availableModels.length > 0) {
+        for (const model of availableModels) {
           const compatibleVoices = config.voices
-            .filter((v) => !v.compatibleModels || v.compatibleModels.includes(model.id))
+            .filter(
+              (v) =>
+                !!managedModels || !v.compatibleModels || v.compatibleModels.includes(model.id),
+            )
             .map((v) => ({ id: v.id, name: v.name, language: v.language }));
           if (providerId === VOXCPM_TTS_PROVIDER_ID) {
             compatibleVoices.push(
