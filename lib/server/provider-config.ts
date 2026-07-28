@@ -19,6 +19,8 @@ const log = createLogger('ServerProviderConfig');
 interface ServerProviderEntry {
   apiKey: string;
   baseUrl?: string;
+  /** Optional OpenAI-compatible catalog root when execution uses a native protocol URL. */
+  catalogBaseUrl?: string;
   models?: string[];
   proxy?: string;
   /** Aliyun AccessKey ID (AliDocMind — uses AK/SK instead of a single apiKey). */
@@ -195,6 +197,7 @@ function loadEnvSection(
         result[id] = {
           apiKey: entry.apiKey || '',
           baseUrl: entry.baseUrl,
+          catalogBaseUrl: entry.catalogBaseUrl,
           models: entry.models,
           proxy: entry.proxy,
         };
@@ -206,6 +209,7 @@ function loadEnvSection(
   for (const [prefix, providerId] of Object.entries(envMap)) {
     const envApiKey = process.env[`${prefix}_API_KEY`] || undefined;
     const envBaseUrl = process.env[`${prefix}_BASE_URL`] || undefined;
+    const envCatalogBaseUrl = process.env[`${prefix}_CATALOG_BASE_URL`] || undefined;
     const envModelsStr = process.env[`${prefix}_MODELS`];
     const envModels = envModelsStr
       ? envModelsStr
@@ -218,6 +222,7 @@ function loadEnvSection(
       // YAML entry exists — env vars override individual fields
       if (envApiKey) result[providerId].apiKey = envApiKey;
       if (envBaseUrl) result[providerId].baseUrl = envBaseUrl;
+      if (envCatalogBaseUrl) result[providerId].catalogBaseUrl = envCatalogBaseUrl;
       if (envModels) result[providerId].models = envModels;
       continue;
     }
@@ -232,6 +237,7 @@ function loadEnvSection(
     result[providerId] = {
       apiKey: envApiKey || '',
       baseUrl: envBaseUrl,
+      catalogBaseUrl: envCatalogBaseUrl,
       models: envModels,
     };
   }
@@ -314,6 +320,7 @@ function applyAliDocMindFallback(
     accessKeySecret,
     baseUrl:
       existing?.baseUrl || yamlEntry?.baseUrl || process.env.ALIDOCMIND_BASE_URL || undefined,
+    catalogBaseUrl: existing?.catalogBaseUrl || yamlEntry?.catalogBaseUrl,
     models: existing?.models,
     proxy: existing?.proxy,
   };
@@ -353,6 +360,7 @@ function applyOpenAIImageFallback(
     apiKey,
     baseUrl:
       yamlOpenAIImage?.baseUrl || process.env.IMAGE_OPENAI_BASE_URL || process.env.OPENAI_BASE_URL,
+    catalogBaseUrl: yamlOpenAIImage?.catalogBaseUrl,
     models: yamlOpenAIImage?.models,
     proxy: yamlOpenAIImage?.proxy,
   };
@@ -529,6 +537,16 @@ export function resolveTTSBaseUrl(providerId: string, clientBaseUrl?: string): s
 }
 
 /**
+ * Resolve the server-only catalog root for a TTS provider. Native execution adapters may use a
+ * protocol-specific base URL while discovering their selectable models from model-service's
+ * OpenAI-compatible `/v1/models?mode=audio_speech` endpoint.
+ */
+export function resolveTTSCatalogBaseUrl(providerId: string): string | undefined {
+  const entry = getConfig().tts[providerId];
+  return entry?.catalogBaseUrl || entry?.baseUrl;
+}
+
+/**
  * Resolve the TTS model. A managed provider may define an allowlist through
  * `${PREFIX}_MODELS`; a selected allowlisted model is preserved, while a
  * missing or invalid selection falls back to the first operator model.
@@ -539,6 +557,23 @@ export function resolveTTSModel(providerId: string, clientModel?: string): strin
     return clientModel && entry.models.includes(clientModel) ? clientModel : entry.models[0];
   }
   return clientModel;
+}
+
+/**
+ * Whether this deployment routes native Doubao requests through ReachAcademy's model-service.
+ * The decision uses server-owned configuration only. A generic managed Doubao entry that points
+ * directly at Volcengine must keep its original appId/accessKey or Agent Plan authentication.
+ */
+export function isReachAnyManagedTTSProxy(providerId: string): boolean {
+  if (providerId !== 'doubao-tts') return false;
+  const baseUrl = getConfig().tts[providerId]?.baseUrl;
+  if (!baseUrl) return false;
+  try {
+    const pathname = new URL(baseUrl).pathname.replace(/\/+$/, '');
+    return pathname === '/v1/volcengine/tts';
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

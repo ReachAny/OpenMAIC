@@ -23,7 +23,7 @@ function okResponse(body: string) {
 
 const helloB64 = Buffer.from([1, 2, 3, 4]).toString('base64');
 
-describe('Doubao TTS dual auth', () => {
+describe('Doubao TTS auth modes', () => {
   beforeEach(() => {
     mockFetch.mockReset();
   });
@@ -68,6 +68,30 @@ describe('Doubao TTS dual auth', () => {
     expect(init.headers['X-Api-App-Id']).toBe('app123');
     expect(init.headers['X-Api-Access-Key']).toBe('secretAccessKey');
     expect(init.headers['X-Api-Key']).toBeUndefined();
+  });
+
+  it('uses Bearer auth and the selected resource ID for the managed model-service proxy', async () => {
+    mockFetch.mockResolvedValueOnce(okResponse(ndjsonBody([helloB64])));
+
+    await generateTTS(
+      {
+        providerId: 'doubao-tts',
+        apiKey: 'openmaic-service-token',
+        baseUrl: 'http://model-service:8100/v1/volcengine/tts',
+        modelId: 'seed-tts-2.0',
+        voice: 'zh_female_vv_uranus_bigtts',
+        providerOptions: { serverManagedProxy: true },
+      },
+      '你好',
+    );
+
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe('http://model-service:8100/v1/volcengine/tts/unidirectional');
+    expect(init.headers.Authorization).toBe('Bearer openmaic-service-token');
+    expect(init.headers['X-Api-Resource-Id']).toBe('seed-tts-2.0');
+    expect(init.headers['X-Api-Key']).toBeUndefined();
+    expect(init.headers['X-Api-App-Id']).toBeUndefined();
+    expect(init.headers['X-Api-Access-Key']).toBeUndefined();
   });
 
   it('rejects an empty key before making a request', async () => {

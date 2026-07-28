@@ -507,6 +507,27 @@ pdf:
       expect(resolveTTSModel('openai-tts', 'unknown')).toBe('voice-a');
     });
 
+    it('identifies only the server-owned ReachAcademy Doubao proxy path', async () => {
+      vi.stubEnv('TTS_DOUBAO_API_KEY', 'service-token');
+      vi.stubEnv('TTS_DOUBAO_BASE_URL', 'http://model-service:8100/v1/volcengine/tts');
+      vi.stubEnv('TTS_DOUBAO_CATALOG_BASE_URL', 'http://model-service:8100/v1');
+      const { isReachAnyManagedTTSProxy, resolveTTSCatalogBaseUrl } =
+        await import('@/lib/server/provider-config');
+
+      expect(isReachAnyManagedTTSProxy('doubao-tts')).toBe(true);
+      expect(isReachAnyManagedTTSProxy('openai-tts')).toBe(false);
+      expect(resolveTTSCatalogBaseUrl('doubao-tts')).toBe('http://model-service:8100/v1');
+
+      vi.resetModules();
+      vi.stubEnv('TTS_DOUBAO_BASE_URL', 'https://openspeech.bytedance.com/api/v3/tts');
+      vi.stubEnv('TTS_DOUBAO_CATALOG_BASE_URL', '');
+      const direct = await import('@/lib/server/provider-config');
+      expect(direct.isReachAnyManagedTTSProxy('doubao-tts')).toBe(false);
+      expect(direct.resolveTTSCatalogBaseUrl('doubao-tts')).toBe(
+        'https://openspeech.bytedance.com/api/v3/tts',
+      );
+    });
+
     it('force-disables a provider via TTS_<P>_ENABLED=false even when it has a key', async () => {
       vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
       vi.stubEnv('TTS_OPENAI_ENABLED', 'false');

@@ -13,6 +13,7 @@ import { recordGenerationUsage } from '@/lib/server/usage-storage';
 import {
   isServerConfiguredProvider,
   isServerTTSProviderDisabled,
+  isReachAnyManagedTTSProxy,
   resolveTTSApiKey,
   resolveTTSBaseUrl,
   resolveTTSModel,
@@ -108,7 +109,15 @@ export async function POST(req: NextRequest) {
       speed: ttsSpeed ?? 1.0,
       apiKey,
       baseUrl,
-      providerOptions: ttsProviderOptions,
+      providerOptions:
+        ttsProviderId === 'doubao-tts'
+          ? {
+              ...ttsProviderOptions,
+              // Server-derived and written last so a client cannot opt into Bearer auth for an
+              // unmanaged URL or disable it for the managed model-service proxy.
+              serverManagedProxy: isReachAnyManagedTTSProxy(ttsProviderId),
+            }
+          : ttsProviderOptions,
     };
 
     log.info(

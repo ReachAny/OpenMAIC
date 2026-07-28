@@ -28,6 +28,7 @@ vi.mock('@/lib/server/provider-config', () => ({
   resolveBaseUrl: (id: string) => `https://models.example/${id}/v1`,
   resolveTTSApiKey: (id: string) => `${id}-key`,
   resolveTTSBaseUrl: (id: string) => `https://models.example/${id}/v1`,
+  resolveTTSCatalogBaseUrl: (id: string) => `https://catalog.example/${id}/v1`,
   resolveASRApiKey: (id: string) => `${id}-key`,
   resolveASRBaseUrl: (id: string) => `https://models.example/${id}/v1`,
   resolveImageApiKey: (id: string) => `${id}-key`,
@@ -82,6 +83,11 @@ describe('GET /api/server-providers', () => {
     expect(body.image['openai-image'].models).toEqual(['image_generation-alias']);
     expect(body.video.sora.models).toEqual(['video_generation-alias']);
     expect(mocks.fetchModels).toHaveBeenCalledTimes(5);
+    expect(mocks.fetchModels).toHaveBeenCalledWith(
+      'https://catalog.example/openai-tts/v1',
+      'openai-tts-key',
+      { mode: 'audio_speech' },
+    );
     expect(mocks.fetchModels).not.toHaveBeenCalledWith(
       expect.stringContaining('/openai/'),
       expect.anything(),

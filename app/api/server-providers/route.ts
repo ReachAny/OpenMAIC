@@ -10,7 +10,7 @@ import {
   resolveApiKey,
   resolveBaseUrl,
   resolveTTSApiKey,
-  resolveTTSBaseUrl,
+  resolveTTSCatalogBaseUrl,
   resolveASRApiKey,
   resolveASRBaseUrl,
   resolveImageApiKey,
@@ -61,7 +61,7 @@ export async function GET() {
         getServerTTSProviders(),
         'audio_speech',
         resolveTTSApiKey,
-        resolveTTSBaseUrl,
+        resolveTTSCatalogBaseUrl,
       ),
       enrichModelCatalog(
         getServerASRProviders(),

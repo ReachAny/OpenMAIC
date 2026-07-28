@@ -20,12 +20,14 @@ import {
   getServerImageProviders,
   getServerVideoProviders,
   getServerTTSProviders,
+  isReachAnyManagedTTSProxy,
   resolveImageApiKey,
   resolveImageBaseUrl,
   resolveVideoApiKey,
   resolveVideoBaseUrl,
   resolveTTSApiKey,
   resolveTTSBaseUrl,
+  resolveTTSModel,
 } from '@/lib/server/provider-config';
 import type { SceneOutline } from '@/lib/types/generation';
 import type { Scene } from '@/lib/types/stage';
@@ -266,11 +268,18 @@ export async function generateTTSForClassroom(
         const result = await generateTTS(
           {
             providerId,
-            modelId: DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '',
+            modelId: resolveTTSModel(
+              providerId,
+              DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || undefined,
+            ),
             apiKey,
             baseUrl: ttsBaseUrl,
             voice,
             speed: speechAction.speed,
+            providerOptions:
+              providerId === 'doubao-tts'
+                ? { serverManagedProxy: isReachAnyManagedTTSProxy(providerId) }
+                : undefined,
           },
           speechAction.text,
         );
