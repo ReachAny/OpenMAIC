@@ -71,7 +71,7 @@ describe('embedded persistence route', () => {
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://retry-test');
     vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
-    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
+    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/handler');
     const request = () =>
       new Request('http://localhost/api/persistence/runtime/sessions', {
         headers: { authorization: 'Bearer test-token' },
@@ -146,7 +146,7 @@ describe('embedded persistence route', () => {
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://adapter-test');
     vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
-    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
+    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/handler');
     const pool = { end: vi.fn().mockResolvedValue(undefined) };
 
     const put = await handlePersistenceRequest(
@@ -200,7 +200,7 @@ describe('embedded persistence route', () => {
   it('refuses writes to the published stage so authoring cannot rewrite released courseware', async () => {
     vi.stubEnv('DATABASE_URL', 'postgres://unused-in-this-test');
     vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
-    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
+    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/handler');
     const poolFactory = vi.fn();
 
     for (const method of ['PUT', 'POST', 'PATCH', 'DELETE']) {

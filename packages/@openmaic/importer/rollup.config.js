@@ -6,6 +6,19 @@ import json from '@rollup/plugin-json';
 import globals from 'rollup-plugin-node-globals';
 import builtins from 'rollup-plugin-node-builtins';
 
+const createNodeGlobalsPlugin = () => {
+  const plugin = globals();
+
+  return {
+    ...plugin,
+    name: 'node-globals',
+    load(id) {
+      const result = plugin.load.call(this, id);
+      return typeof result === 'string' ? result.replaceAll('\\', '/') : result;
+    },
+  };
+};
+
 const onwarn = (warning) => {
   if (warning.code === 'CIRCULAR_DEPENDENCY') return;
   console.warn(`(!) ${warning.message}`);
@@ -17,7 +30,7 @@ const plugins = [
   json(),
   typescript({ tsconfig: './tsconfig.json' }),
   terser(),
-  globals(),
+  createNodeGlobalsPlugin(),
   builtins(),
 ];
 
