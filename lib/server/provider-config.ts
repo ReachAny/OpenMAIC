@@ -103,6 +103,7 @@ const ASR_ENV_MAP: Record<string, string> = {
 };
 
 const PDF_ENV_MAP: Record<string, string> = {
+  PDF_REACHANY: 'reachany',
   PDF_UNPDF: 'unpdf',
   PDF_MINERU: 'mineru',
   PDF_MINERU_CLOUD: 'mineru-cloud',
@@ -129,6 +130,7 @@ const VIDEO_ENV_MAP: Record<string, string> = {
 };
 
 const WEB_SEARCH_ENV_MAP: Record<string, string> = {
+  WEB_SEARCH_REACHANY: 'reachany',
   TAVILY: 'tavily',
   BOCHA: 'bocha',
   BRAVE: 'brave',
@@ -367,6 +369,15 @@ function applyOpenAIImageFallback(
   return imageConfig;
 }
 
+function requireApiKeyAndBaseUrl(
+  section: Record<string, ServerProviderEntry>,
+  providerId: string,
+): Record<string, ServerProviderEntry> {
+  const entry = section[providerId];
+  if (entry && (!entry.apiKey || !entry.baseUrl)) delete section[providerId];
+  return section;
+}
+
 function buildConfig(yamlData: YamlData): ServerConfig {
   const image = applyOpenAIImageFallback(
     loadEnvSection(IMAGE_ENV_MAP, yamlData.image, {
@@ -385,18 +396,24 @@ function buildConfig(yamlData: YamlData): ServerConfig {
     asr: loadEnvSection(ASR_ENV_MAP, yamlData.asr, {
       keylessProviders: new Set(['lemonade-asr']),
     }),
-    pdf: applyAliDocMindFallback(
-      loadEnvSection(PDF_ENV_MAP, yamlData.pdf, {
-        requiresBaseUrl: true,
-        baseUrlOptionalProviders: new Set(['mineru-cloud']),
-      }),
-      yamlData.pdf,
+    pdf: requireApiKeyAndBaseUrl(
+      applyAliDocMindFallback(
+        loadEnvSection(PDF_ENV_MAP, yamlData.pdf, {
+          requiresBaseUrl: true,
+          baseUrlOptionalProviders: new Set(['mineru-cloud']),
+        }),
+        yamlData.pdf,
+      ),
+      'reachany',
     ),
     image,
     video: loadEnvSection(VIDEO_ENV_MAP, yamlData.video),
-    webSearch: loadEnvSection(WEB_SEARCH_ENV_MAP, yamlData['web-search'], {
-      keylessProviders: new Set(['brave', 'searxng']),
-    }),
+    webSearch: requireApiKeyAndBaseUrl(
+      loadEnvSection(WEB_SEARCH_ENV_MAP, yamlData['web-search'], {
+        keylessProviders: new Set(['brave', 'searxng']),
+      }),
+      'reachany',
+    ),
     ttsDisabled: collectDisabledTTS(yamlData.tts),
   };
 }
@@ -703,6 +720,7 @@ export function resolveServerWebSearchProviderId(preferredProviderId?: string): 
   if (preferredProviderId && webSearch[preferredProviderId]?.apiKey) {
     return preferredProviderId;
   }
+  if (webSearch.reachany?.apiKey) return 'reachany';
   if (webSearch.tavily?.apiKey) return 'tavily';
   if (webSearch.bocha?.apiKey) return 'bocha';
   if (webSearch.baidu?.apiKey) return 'baidu';

@@ -1,4 +1,5 @@
 import { parseWithMinerUCloud } from '@/lib/pdf/mineru-cloud';
+import { parseWithReachAny } from '@/lib/pdf/reachany';
 import { parsePDF, parseWithMinerUDocument } from '@/lib/pdf/pdf-providers';
 import { PDF_PROVIDERS } from '@/lib/pdf/constants';
 import type { PDFProviderConfig, PDFProviderId } from '@/lib/pdf/types';
@@ -22,9 +23,13 @@ function capabilitiesFromPdfProvider(
   providerId: PDFProviderId,
 ): DocumentExtractorCapabilities {
   const features = new Set(provider.features);
-  const isCloudAsync = providerId === 'mineru-cloud' || providerId === 'alidocmind';
+  const isCloudAsync =
+    providerId === 'mineru-cloud' || providerId === 'alidocmind' || providerId === 'reachany';
   const hasOcr =
-    providerId === 'mineru' || providerId === 'mineru-cloud' || providerId === 'alidocmind';
+    providerId === 'mineru' ||
+    providerId === 'mineru-cloud' ||
+    providerId === 'alidocmind' ||
+    providerId === 'reachany';
   return {
     text: features.has('text'),
     images: features.has('images'),
@@ -44,6 +49,8 @@ function supportedMimeTypesForProvider(id: PDFProviderId): readonly string[] {
       return MINERU_CLOUD_MIMES;
     case 'alidocmind':
       return ALIDOCMIND_MIMES;
+    case 'reachany':
+      return PDF_MIME_TYPES;
     default:
       return PDF_MIME_TYPES;
   }
@@ -69,6 +76,11 @@ function createPdfBackedDocumentExtractor(id: PDFProviderId): DocumentExtractorP
       if (id === 'alidocmind') {
         // AliDocMind handles pdf/docx/pptx/xlsx/images through one flow.
         parsed = await parsePDF(config, input.buffer, {
+          fileName: input.fileName,
+          mimeType: input.mimeType,
+        });
+      } else if (id === 'reachany') {
+        parsed = await parseWithReachAny(config, input.buffer, {
           fileName: input.fileName,
           mimeType: input.mimeType,
         });

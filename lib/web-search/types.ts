@@ -12,7 +12,8 @@ export type WebSearchProviderId =
   | 'baidu'
   | 'minimax'
   | 'doubao'
-  | 'searxng';
+  | 'searxng'
+  | 'reachany';
 
 /**
  * Baidu sub-source toggles

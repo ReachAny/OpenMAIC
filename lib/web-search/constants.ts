@@ -65,6 +65,13 @@ export const WEB_SEARCH_PROVIDERS: Record<WebSearchProviderId, WebSearchProvider
     requiresBaseUrl: true,
     endpointPath: '/search',
   },
+  reachany: {
+    id: 'reachany',
+    name: 'ReachAny',
+    requiresApiKey: true,
+    requiresBaseUrl: true,
+    endpointPath: '/v1/web/search',
+  },
 };
 
 export function isWebSearchProviderConfigured(

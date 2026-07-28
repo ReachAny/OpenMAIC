@@ -184,6 +184,8 @@ function getWebSearchEnvKey(providerId: WebSearchProviderId): string {
       return 'WEB_SEARCH_MINIMAX_API_KEY';
     case 'searxng':
       return 'SEARXNG_BASE_URL';
+    case 'reachany':
+      return 'WEB_SEARCH_REACHANY_API_KEY';
     case 'tavily':
     default:
       return 'TAVILY_API_KEY';

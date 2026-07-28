@@ -37,6 +37,7 @@ const ENV_PREFIXES_TO_CLEAR = [
   'PDF_UNPDF',
   'PDF_MINERU',
   'PDF_MINERU_CLOUD',
+  'PDF_REACHANY',
   'IMAGE_OPENAI',
   'IMAGE_SEEDREAM',
   'IMAGE_QWEN_IMAGE',
@@ -51,6 +52,7 @@ const ENV_PREFIXES_TO_CLEAR = [
   'VIDEO_GROK',
   'BOCHA',
   'WEB_SEARCH_MINIMAX',
+  'WEB_SEARCH_REACHANY',
 ];
 
 function clearProviderEnv() {
@@ -319,6 +321,31 @@ providers:
   });
 
   describe('resolveWebSearchApiKey', () => {
+    it('loads the managed ReachAny search gateway without exposing its URL', async () => {
+      vi.stubEnv('WEB_SEARCH_REACHANY_API_KEY', 'managed-token');
+      vi.stubEnv('WEB_SEARCH_REACHANY_BASE_URL', 'http://model-service:8100');
+      const {
+        getServerWebSearchProviders,
+        resolveServerWebSearchProviderId,
+        resolveWebSearchApiKey,
+        resolveWebSearchBaseUrl,
+      } = await import('@/lib/server/provider-config');
+
+      expect(getServerWebSearchProviders().reachany).toEqual({});
+      expect(resolveServerWebSearchProviderId()).toBe('reachany');
+      expect(resolveWebSearchApiKey('reachany', undefined)).toBe('managed-token');
+      expect(resolveWebSearchBaseUrl('reachany')).toBe('http://model-service:8100');
+    });
+
+    it('does not enable the managed ReachAny search gateway without a base URL', async () => {
+      vi.stubEnv('WEB_SEARCH_REACHANY_API_KEY', 'managed-token');
+      const { getServerWebSearchProviders, resolveServerWebSearchProviderId } =
+        await import('@/lib/server/provider-config');
+
+      expect(getServerWebSearchProviders().reachany).toBeUndefined();
+      expect(resolveServerWebSearchProviderId()).toBeUndefined();
+    });
+
     it('returns client key first', async () => {
       const { resolveWebSearchApiKey } = await import('@/lib/server/provider-config');
       expect(resolveWebSearchApiKey('client-key')).toBe('client-key');
@@ -368,6 +395,24 @@ providers:
   });
 
   describe('baseUrl-only providers (e.g. mineru)', () => {
+    it('loads the managed ReachAny PDF gateway only with key and base URL', async () => {
+      vi.stubEnv('PDF_REACHANY_API_KEY', 'managed-token');
+      vi.stubEnv('PDF_REACHANY_BASE_URL', 'http://model-service:8100');
+      const { getServerPDFProviders, resolvePDFApiKey, resolvePDFBaseUrl } =
+        await import('@/lib/server/provider-config');
+
+      expect(getServerPDFProviders().reachany).toEqual({});
+      expect(resolvePDFApiKey('reachany')).toBe('managed-token');
+      expect(resolvePDFBaseUrl('reachany')).toBe('http://model-service:8100');
+    });
+
+    it('does not enable the managed ReachAny PDF gateway without an API key', async () => {
+      vi.stubEnv('PDF_REACHANY_BASE_URL', 'http://model-service:8100');
+      const { getServerPDFProviders } = await import('@/lib/server/provider-config');
+
+      expect(getServerPDFProviders().reachany).toBeUndefined();
+    });
+
     it('includes PDF provider from YAML when only baseUrl is configured (no apiKey)', async () => {
       yamlOverride = `
 pdf:

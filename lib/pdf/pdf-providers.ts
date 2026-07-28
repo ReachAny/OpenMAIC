@@ -142,6 +142,7 @@ import sharp from 'sharp';
 import type { PDFParserConfig } from './types';
 import type { ParsedPdfContent } from '@/lib/types/pdf';
 import { PDF_PROVIDERS } from './constants';
+import { parseWithReachAny } from './reachany';
 import { createLogger } from '@/lib/logger';
 import { extractMinerUResult } from './mineru-parser';
 import { parseWithMinerUCloud } from './mineru-cloud';
@@ -230,6 +231,10 @@ export async function parsePDF(
 
     case 'alidocmind':
       result = await parseWithAliDocMind(config, pdfBuffer, options);
+      break;
+
+    case 'reachany':
+      result = await parseWithReachAny(config, pdfBuffer, options);
       break;
 
     default:

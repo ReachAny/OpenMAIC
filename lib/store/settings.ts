@@ -510,6 +510,7 @@ const getDefaultAudioConfig = () => ({
 const getDefaultPDFConfig = () => ({
   pdfProviderId: 'unpdf' as PDFProviderId,
   pdfProvidersConfig: {
+    reachany: { apiKey: '', baseUrl: '', enabled: false },
     unpdf: { apiKey: '', baseUrl: '', enabled: true },
     mineru: { apiKey: '', baseUrl: '', enabled: false },
     'mineru-cloud': { apiKey: '', baseUrl: '', enabled: false },
@@ -561,6 +562,7 @@ const getDefaultVideoConfig = () => ({
 const getDefaultWebSearchConfig = () => ({
   webSearchProviderId: 'tavily' as WebSearchProviderId,
   webSearchProvidersConfig: {
+    reachany: { apiKey: '', baseUrl: '', enabled: true, requiresApiKey: true },
     tavily: { apiKey: '', baseUrl: '', enabled: true, requiresApiKey: true },
     bocha: { apiKey: '', baseUrl: '', enabled: true, requiresApiKey: true },
     brave: {
@@ -1770,9 +1772,11 @@ export const useSettingsStore = create<SettingsState>()(
               let autoTtsEnabled: boolean | undefined;
 
               if (!state.autoConfigApplied) {
-                // PDF: unpdf → mineru-cloud or mineru if server has it
+                // PDF: prefer the managed ReachAny gateway, then direct MinerU providers.
                 if (state.pdfProviderId === 'unpdf') {
-                  if (newPDFConfig['mineru-cloud']?.isServerConfigured) {
+                  if (newPDFConfig.reachany?.isServerConfigured) {
+                    autoPdfProvider = 'reachany' as PDFProviderId;
+                  } else if (newPDFConfig['mineru-cloud']?.isServerConfigured) {
                     autoPdfProvider = 'mineru-cloud' as PDFProviderId;
                   } else if (newPDFConfig.mineru?.isServerConfigured) {
                     autoPdfProvider = 'mineru' as PDFProviderId;

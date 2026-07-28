@@ -3,6 +3,7 @@ import { searchWithBocha } from './bocha';
 import { searchWithBrave } from './brave';
 import { searchWithDoubao } from './doubao';
 import { searchWithMiniMax } from './minimax';
+import { searchWithReachAny } from './reachany';
 import { searchWithSearxng } from './searxng';
 import { searchWithTavily } from './tavily';
 import type { WebSearchResult } from '@/lib/types/web-search';
@@ -33,6 +34,8 @@ export async function searchWeb(params: {
       return searchWithMiniMax({ query, apiKey, maxResults, baseUrl });
     case 'searxng':
       return searchWithSearxng({ query, maxResults, baseUrl });
+    case 'reachany':
+      return searchWithReachAny({ query, apiKey, maxResults, baseUrl });
     case 'tavily':
       return searchWithTavily({ query, apiKey, maxResults, baseUrl });
     default: {

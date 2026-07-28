@@ -34,6 +34,7 @@ const OFFICIAL_CLIENT_BASE_URLS: Record<WebSearchProviderId, string[]> = {
   ],
   doubao: ['https://open.feedcoopapi.com', 'https://open.feedcoopapi.com/search_api/web_search'],
   searxng: [],
+  reachany: [],
 };
 
 function normalizeBaseUrl(value: string): string {
