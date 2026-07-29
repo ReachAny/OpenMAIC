@@ -15,6 +15,7 @@ import { MultiTabEditConflictPrompt } from '@/components/edit/MultiTabEditConfli
 import { InteractiveIframeHost } from '@/components/scene-renderers/InteractiveIframeHost';
 import { CHROME_EASE } from '@/lib/edit/transitions';
 import { preloadEditor } from '@/lib/edit/preload-editor';
+import { isClassroomEditingEnabled } from '@/lib/classroom/entry-intent';
 
 /**
  * Stage — top-level classroom container. Dispatches between the two
@@ -31,12 +32,21 @@ import { preloadEditor } from '@/lib/edit/preload-editor';
  * dialog can surface when Pro Switch is clicked but acquire fails).
  */
 export function Stage({
+  autoEnterEditMode = false,
+  editingDisabled = false,
   onRetryOutline,
 }: {
+  autoEnterEditMode?: boolean;
+  editingDisabled?: boolean;
   onRetryOutline?: (outlineId: string) => Promise<void>;
 }) {
   const { mode, setMode, scenes, currentSceneId, generatingOutlines, stage } = useStageStore();
   const currentScene = useStageStore((s) => s.getCurrentScene());
+  const editingEnabled = isClassroomEditingEnabled({
+    autoEnterEditMode,
+    featureEnabled: isMaicEditorEnabled(),
+    published: editingDisabled,
+  });
 
   // Predicate for "can the user enter Pro mode for the current scene?".
   // Single source of truth feeds the Header's Pro Switch state and the
@@ -55,6 +65,7 @@ export function Stage({
   const editLock = useEditModeLock(stage?.id);
 
   const playbackRef = useRef<PlaybackChromeRootHandle>(null);
+  const autoEditAttemptedForStageRef = useRef<string | null>(null);
 
   // Pro Switch handler. Edit→playback is a plain flip (PlaybackChromeRoot
   // will mount fresh; its engine effect re-inits). Playback→edit must
@@ -88,13 +99,30 @@ export function Stage({
     setMode('edit');
   }, [editLock, mode, setMode]);
 
-  // Auto-exit edit mode when the current scene becomes uneditable
-  // (pending generation, no scenes, currently generating).
+  // Host-requested authoring enters Pro mode through the same lock-safe teardown path as the
+  // switch. One attempt per document avoids retry loops after a cross-tab lock conflict.
   useEffect(() => {
-    if (mode === 'edit' && !isEditable) {
+    if (
+      !autoEnterEditMode ||
+      !editingEnabled ||
+      !stage?.id ||
+      !isEditable ||
+      mode === 'edit' ||
+      autoEditAttemptedForStageRef.current === stage.id
+    ) {
+      return;
+    }
+    autoEditAttemptedForStageRef.current = stage.id;
+    void handleToggleEditMode();
+  }, [autoEnterEditMode, editingEnabled, handleToggleEditMode, isEditable, mode, stage?.id]);
+
+  // Auto-exit edit mode when the current scene becomes uneditable or the selected document copy
+  // is playback-only (published/student entry).
+  useEffect(() => {
+    if (mode === 'edit' && (!isEditable || !editingEnabled)) {
       setMode('playback');
     }
-  }, [mode, isEditable, setMode]);
+  }, [editingEnabled, mode, isEditable, setMode]);
 
   // Release the lock whenever we're not in edit mode (covers manual
   // exit, auto-exit, scene becomes uneditable). The hook also self-
@@ -104,7 +132,7 @@ export function Stage({
     if (mode !== 'edit') releaseEditLock();
   }, [mode, releaseEditLock]);
 
-  const toggleHandler = isMaicEditorEnabled() ? handleToggleEditMode : undefined;
+  const toggleHandler = editingEnabled ? handleToggleEditMode : undefined;
 
   // Mode swap choreography — a clean opacity cross-fade. Both roots layer
   // via `absolute inset-0` so they coexist for the ~280ms window without

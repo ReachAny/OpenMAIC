@@ -7,6 +7,7 @@ import type {
   ImageMapping,
   SessionDocumentSource,
 } from '@/lib/types/generation';
+import type { RequestedClassroomMode } from '@/lib/classroom/entry-intent';
 
 // Session state stored in sessionStorage
 export interface GenerationSessionState {
@@ -17,6 +18,8 @@ export interface GenerationSessionState {
    * an id the host already recorded and can navigate back to.
    */
   requestedStageId?: string;
+  /** Classroom mode requested by the embedding host after generation completes. */
+  requestedMode?: RequestedClassroomMode;
   requirements: UserRequirements;
   pdfText: string;
   documentSources?: SessionDocumentSource[];

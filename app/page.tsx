@@ -66,6 +66,7 @@ import { useImportClassroom } from '@/lib/import/use-import-classroom';
 import { shouldShowVocationalTestUi } from '@/lib/config/feature-flags';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
 import { InteractiveModeButton } from '@/components/generation/interactive-mode-button';
+import { readRequestedClassroomMode } from '@/lib/classroom/entry-intent';
 
 const log = createLogger('Home');
 
@@ -387,6 +388,7 @@ function HomePage() {
       const sessionState = {
         sessionId: nanoid(),
         requestedStageId: searchParams.get('stageId') ?? undefined,
+        requestedMode: readRequestedClassroomMode(searchParams),
         requirements,
         pdfText: '',
         pdfImages: [],

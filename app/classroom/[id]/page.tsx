@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { claimStageSceneLoadToken, isCurrentStageSceneLoadToken } from '@/lib/store/stage';
 import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
@@ -21,12 +21,15 @@ import {
   runClassroomLoad,
   saveGeneratedAgentsForCurrentLoad,
 } from '@/lib/classroom/load-classroom';
+import { resolveClassroomEntryIntent } from '@/lib/classroom/entry-intent';
 
 const log = createLogger('Classroom');
 
 export default function ClassroomDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const classroomId = params?.id as string;
+  const entryIntent = resolveClassroomEntryIntent(searchParams);
 
   const { loadFromStorage } = useStageStore();
 
@@ -52,6 +55,8 @@ export default function ClassroomDetailPage() {
         isCurrent,
         loadFromStorage,
         getCurrentStage: () => useStageStore.getState().stage,
+        getCurrentSceneCount: () => useStageStore.getState().scenes.length,
+        requireScenes: entryIntent.published,
         fetchClassroom: defaultClassroomLoadDeps.fetchClassroom,
         applyFallbackScenes: (args) =>
           defaultClassroomLoadDeps.applyFallbackScenes({
@@ -74,7 +79,7 @@ export default function ClassroomDetailPage() {
         log,
       });
     },
-    [classroomId, loadFromStorage],
+    [classroomId, entryIntent.published, loadFromStorage],
   );
 
   useEffect(() => {
@@ -196,7 +201,11 @@ export default function ClassroomDetailPage() {
               </div>
             </div>
           ) : (
-            <Stage onRetryOutline={retrySingleOutline} />
+            <Stage
+              autoEnterEditMode={entryIntent.autoEnterEditMode}
+              editingDisabled={entryIntent.published}
+              onRetryOutline={retrySingleOutline}
+            />
           )}
         </div>
       </MediaStageProvider>

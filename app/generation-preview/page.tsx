@@ -56,6 +56,7 @@ import {
 } from './types';
 import { StepVisualizer } from './components/visualizers';
 import { resolveTaskEngineModeFromOutlineDoneEvent } from './vocational-mode';
+import { buildClassroomHref } from '@/lib/classroom/entry-intent';
 
 const log = createLogger('GenerationPreview');
 const OUTLINE_REVIEW_AUTO_CONTINUE_MS = 2500;
@@ -1076,7 +1077,7 @@ function GenerationPreviewContent() {
 
       sessionStorage.removeItem('generationSession');
       await store.saveToStorage();
-      router.push(`/classroom/${stage.id}`);
+      router.push(buildClassroomHref(stage.id, currentSession.requestedMode));
     } catch (err) {
       setIsOutlineStreaming(false);
       // AbortError is expected when navigating away — don't show as error

@@ -90,6 +90,8 @@ function makeDeps(overrides: Partial<Parameters<typeof runClassroomLoad>[0]> = {
     isCurrent: () => current,
     loadFromStorage: vi.fn().mockResolvedValue(undefined),
     getCurrentStage: () => stage,
+    getCurrentSceneCount: vi.fn().mockReturnValue(1),
+    requireScenes: false,
     fetchClassroom: vi.fn().mockResolvedValue(null),
     applyFallbackScenes: vi.fn().mockResolvedValue(false),
     saveGeneratedAgents: vi.fn().mockResolvedValue([]),
@@ -299,6 +301,30 @@ describe('runClassroomLoad', () => {
     expect(deps.setLoading).not.toHaveBeenCalled();
   });
 
+  it('reports a missing classroom instead of rendering an empty playback shell', async () => {
+    const { deps } = makeDeps();
+
+    await runClassroomLoad(deps);
+
+    expect(deps.setError).toHaveBeenCalledWith('Classroom not found: stage-a');
+    expect(deps.loadRestoredMediaTasks).not.toHaveBeenCalled();
+    expect(deps.setLoading).toHaveBeenCalledWith(false);
+  });
+
+  it('reports an empty published classroom as unavailable', async () => {
+    const { deps, setStage } = makeDeps({
+      getCurrentSceneCount: vi.fn().mockReturnValue(0),
+      requireScenes: true,
+    });
+    setStage(makeStage('stage-a'));
+
+    await runClassroomLoad(deps);
+
+    expect(deps.setError).toHaveBeenCalledWith('Classroom unavailable: stage-a');
+    expect(deps.loadRestoredMediaTasks).not.toHaveBeenCalled();
+    expect(deps.setLoading).toHaveBeenCalledWith(false);
+  });
+
   it('runs all phases and clears loading for the current navigation', async () => {
     const stage = makeStage('stage-a', [
       {
@@ -313,9 +339,8 @@ describe('runClassroomLoad', () => {
     ]);
     const scene = makeScene('scene-a', 'stage-a');
     const mediaTasks = { image: { elementId: 'image' } };
-    const { deps, settings } = makeDeps({
+    const { deps, settings, setStage } = makeDeps({
       fetchClassroom: vi.fn().mockResolvedValue({ stage, scenes: [scene] }),
-      applyFallbackScenes: vi.fn().mockResolvedValue(true),
       loadRestoredMediaTasks: vi.fn().mockResolvedValue(mediaTasks),
       loadGeneratedAgentRecords: vi.fn().mockResolvedValue([{ id: 'agent-a' }]),
       applyGeneratedAgentRecords: vi.fn().mockReturnValue(['agent-a']),
@@ -323,6 +348,10 @@ describe('runClassroomLoad', () => {
         selection: { mode: 'auto', selectedAgentIds: ['agent-a'] },
         isUserSet: false,
       }),
+    });
+    deps.applyFallbackScenes = vi.fn().mockImplementation(async () => {
+      setStage(stage);
+      return true;
     });
 
     await runClassroomLoad(deps);

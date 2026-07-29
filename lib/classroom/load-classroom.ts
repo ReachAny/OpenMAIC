@@ -45,6 +45,8 @@ export interface RunClassroomLoadArgs<TMediaTasks = unknown, TGeneratedAgentReco
   isCurrent: () => boolean;
   loadFromStorage: (classroomId: string, loadToken: StageSceneLoadToken) => Promise<void>;
   getCurrentStage: () => Stage | null;
+  getCurrentSceneCount: () => number;
+  requireScenes: boolean;
   fetchClassroom: (classroomId: string) => Promise<ClassroomPayload | null>;
   applyFallbackScenes: (args: {
     loadToken: StageSceneLoadToken;
@@ -74,6 +76,8 @@ export async function runClassroomLoad<TMediaTasks = unknown, TGeneratedAgentRec
   isCurrent,
   loadFromStorage,
   getCurrentStage,
+  getCurrentSceneCount,
+  requireScenes,
   fetchClassroom,
   applyFallbackScenes,
   saveGeneratedAgents,
@@ -121,6 +125,12 @@ export async function runClassroomLoad<TMediaTasks = unknown, TGeneratedAgentRec
     }
 
     if (!isCurrent()) return;
+    if (!getCurrentStage()) {
+      throw new Error(`Classroom not found: ${classroomId}`);
+    }
+    if (requireScenes && getCurrentSceneCount() === 0) {
+      throw new Error(`Classroom unavailable: ${classroomId}`);
+    }
     const mediaTasks = await loadRestoredMediaTasks(classroomId);
     if (!isCurrent()) {
       discardRestoredMediaTasks(mediaTasks);
