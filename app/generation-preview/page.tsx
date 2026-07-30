@@ -1077,7 +1077,9 @@ function GenerationPreviewContent() {
 
       sessionStorage.removeItem('generationSession');
       await store.saveToStorage();
-      router.push(buildClassroomHref(stage.id, currentSession.requestedMode));
+      router.push(
+        buildClassroomHref(stage.id, currentSession.requestedMode, currentSession.returnTo),
+      );
     } catch (err) {
       setIsOutlineStreaming(false);
       // AbortError is expected when navigating away — don't show as error

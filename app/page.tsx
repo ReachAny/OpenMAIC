@@ -1,18 +1,14 @@
 'use client';
 
-import { Suspense, useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowUp,
   Check,
   ChevronDown,
-  Clock,
-  Copy,
   ImagePlus,
   Pencil,
-  Trash2,
-  Search,
   Settings,
   Sun,
   Moon,
@@ -20,15 +16,11 @@ import {
   ChevronUp,
   Upload,
   Sparkles,
-  Atom,
-  X,
   Presentation,
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { LanguageSwitcher } from '@/components/language-switcher';
 import { createLogger } from '@/lib/logger';
-import { Button } from '@/components/ui/button';
-import { InputGroup, InputGroupInput, InputGroupButton } from '@/components/ui/input-group';
 import { Textarea as UITextarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { SettingsDialog } from '@/components/settings';
@@ -47,16 +39,6 @@ import type {
 import { useSettingsStore } from '@/lib/store/settings';
 import { hasUsableLLMProvider } from '@/lib/store/settings-validation';
 import { useUserProfileStore, AVATAR_OPTIONS } from '@/lib/store/user-profile';
-import {
-  StageListItem,
-  listStages,
-  deleteStageData,
-  renameStage,
-  getFirstSlideByStages,
-  revokeThumbnailSlideMediaUrls,
-} from '@/lib/utils/stage-storage';
-import { SlideThumbnail } from '@/components/slide-renderer/SlideThumbnail';
-import type { Slide } from '@openmaic/dsl';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -66,12 +48,14 @@ import { useImportClassroom } from '@/lib/import/use-import-classroom';
 import { shouldShowVocationalTestUi } from '@/lib/config/feature-flags';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
 import { InteractiveModeButton } from '@/components/generation/interactive-mode-button';
-import { readRequestedClassroomMode } from '@/lib/classroom/entry-intent';
+import {
+  readReachAcademyReturnUrl,
+  readRequestedClassroomMode,
+} from '@/lib/classroom/entry-intent';
 
 const log = createLogger('Home');
 
 const WEB_SEARCH_STORAGE_KEY = 'webSearchEnabled';
-const RECENT_OPEN_STORAGE_KEY = 'recentClassroomsOpen';
 const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 
 // PPTX import is still scaffolding: `useImportPptx` has no `onImported` consumer
@@ -117,24 +101,8 @@ function HomePage() {
   // instead of inspecting modelId directly.
   const providersConfig = useSettingsStore((s) => s.providersConfig);
   const hasUsableProvider = hasUsableLLMProvider(providersConfig);
-  const [recentOpen, setRecentOpen] = useState(true);
-  const persistRecentOpen = (next: boolean) => {
-    setRecentOpen(next);
-    try {
-      localStorage.setItem(RECENT_OPEN_STORAGE_KEY, String(next));
-    } catch {
-      /* ignore */
-    }
-  };
-
   // Hydrate client-only state after mount (avoids SSR mismatch)
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(RECENT_OPEN_STORAGE_KEY);
-      if (saved !== null) setRecentOpen(saved !== 'false');
-    } catch {
-      /* localStorage unavailable */
-    }
     try {
       const savedWebSearch = localStorage.getItem(WEB_SEARCH_STORAGE_KEY);
       const savedInteractiveMode = localStorage.getItem(INTERACTIVE_MODE_STORAGE_KEY);
@@ -163,23 +131,8 @@ function HomePage() {
 
   const [themeOpen, setThemeOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [classrooms, setClassrooms] = useState<StageListItem[]>([]);
-  const [thumbnails, setThumbnails] = useState<Record<string, Slide>>({});
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchButtonRef = useRef<HTMLButtonElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const thumbnailsRef = useRef<Record<string, Slide>>({});
-
-  const replaceThumbnails = (slides: Record<string, Slide>) => {
-    const previous = thumbnailsRef.current;
-    thumbnailsRef.current = slides;
-    setThumbnails(slides);
-    window.setTimeout(() => revokeThumbnailSlideMediaUrls(previous), 0);
-  };
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -193,28 +146,7 @@ function HomePage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [themeOpen]);
 
-  const loadClassrooms = async () => {
-    try {
-      const list = await listStages();
-      setClassrooms(list);
-      // Load first slide thumbnails
-      if (list.length > 0) {
-        const slides = await getFirstSlideByStages(list.map((c) => c.id));
-        replaceThumbnails(slides);
-      } else {
-        replaceThumbnails({});
-      }
-    } catch (err) {
-      log.error('Failed to load classrooms:', err);
-      toast.error('Persistence is unavailable. Saved classrooms could not be loaded.');
-    }
-  };
-
-  const { importing, fileInputRef, triggerFileSelect, handleFileChange } = useImportClassroom(
-    () => {
-      loadClassrooms();
-    },
-  );
+  const { importing, fileInputRef, triggerFileSelect, handleFileChange } = useImportClassroom();
 
   const {
     importing: pptxImporting,
@@ -229,51 +161,7 @@ function HomePage() {
     // (gen_img_1, etc.) collide with other courses' placeholders.
     useMediaGenerationStore.getState().revokeObjectUrls();
     useMediaGenerationStore.setState({ tasks: {} });
-
-    loadClassrooms();
-
-    return () => {
-      revokeThumbnailSlideMediaUrls(thumbnailsRef.current);
-      thumbnailsRef.current = {};
-    };
   }, []);
-
-  const handleDelete = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setPendingDeleteId(id);
-  };
-
-  const confirmDelete = async (id: string) => {
-    setPendingDeleteId(null);
-    try {
-      await deleteStageData(id);
-      await loadClassrooms();
-    } catch (err) {
-      log.error('Failed to delete classroom:', err);
-      toast.error('Failed to delete classroom');
-    }
-  };
-
-  const handleRename = async (id: string, newName: string) => {
-    try {
-      await renameStage(id, newName);
-      setClassrooms((prev) => prev.map((c) => (c.id === id ? { ...c, name: newName } : c)));
-    } catch (err) {
-      log.error('Failed to rename classroom:', err);
-      toast.error(t('classroom.renameFailed'));
-    }
-  };
-
-  const deferredSearchQuery = useDeferredValue(searchQuery);
-  const filteredClassrooms = useMemo(() => {
-    const q = deferredSearchQuery.trim().toLowerCase();
-    if (!q) return classrooms;
-    return classrooms.filter((c) => {
-      const name = c.name?.toLowerCase() ?? '';
-      const desc = c.description?.toLowerCase() ?? '';
-      return name.includes(q) || desc.includes(q);
-    });
-  }, [classrooms, deferredSearchQuery]);
 
   const updateForm = <K extends keyof FormState>(field: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -389,6 +277,7 @@ function HomePage() {
         sessionId: nanoid(),
         requestedStageId: searchParams.get('stageId') ?? undefined,
         requestedMode: readRequestedClassroomMode(searchParams),
+        returnTo: readReachAcademyReturnUrl(searchParams),
         requirements,
         pdfText: '',
         pdfImages: [],
@@ -410,18 +299,6 @@ function HomePage() {
       log.error('Error preparing generation:', err);
       setError(err instanceof Error ? err.message : t('upload.generateFailed'));
     }
-  };
-
-  const formatDate = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - date.getTime());
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return t('classroom.today');
-    if (diffDays === 1) return t('classroom.yesterday');
-    if (diffDays < 7) return `${diffDays} ${t('classroom.daysAgo')}`;
-    return date.toLocaleDateString();
   };
 
   const canGenerate = !!form.requirement.trim() && hasUsableProvider;
@@ -559,10 +436,7 @@ function HomePage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: 'easeOut' }}
-        className={cn(
-          'relative z-20 w-full max-w-[800px] flex flex-col items-center',
-          classrooms.length === 0 ? 'justify-center min-h-[calc(100dvh-8rem)]' : 'mt-[10vh]',
-        )}
+        className="relative z-20 min-h-[calc(100dvh-8rem)] w-full max-w-[800px] flex flex-col items-center justify-center"
       >
         {/* ── Logo ── */}
         <motion.img
@@ -739,213 +613,28 @@ function HomePage() {
           )}
         </AnimatePresence>
 
-        {/* ── Import buttons (empty state) ── */}
-        {classrooms.length === 0 && (
-          <div className="relative z-10 mt-4 flex items-center gap-4">
+        {/* ── Import buttons ── */}
+        <div className="relative z-10 mt-4 flex items-center gap-4">
+          <button
+            onClick={triggerFileSelect}
+            disabled={importing}
+            className="flex items-center gap-1.5 text-[12px] text-muted-foreground/40 hover:text-foreground/60 transition-colors"
+          >
+            <Upload className="size-3.5" />
+            <span>{t('import.classroom')}</span>
+          </button>
+          {PPTX_IMPORT_ENABLED && (
             <button
-              onClick={triggerFileSelect}
-              disabled={importing}
+              onClick={triggerPptxFileSelect}
+              disabled={pptxImporting}
               className="flex items-center gap-1.5 text-[12px] text-muted-foreground/40 hover:text-foreground/60 transition-colors"
             >
-              <Upload className="size-3.5" />
-              <span>{t('import.classroom')}</span>
+              <Presentation className="size-3.5" />
+              <span>{t('import.pptx')}</span>
             </button>
-            {PPTX_IMPORT_ENABLED && (
-              <button
-                onClick={triggerPptxFileSelect}
-                disabled={pptxImporting}
-                className="flex items-center gap-1.5 text-[12px] text-muted-foreground/40 hover:text-foreground/60 transition-colors"
-              >
-                <Presentation className="size-3.5" />
-                <span>{t('import.pptx')}</span>
-              </button>
-            )}
-          </div>
-        )}
+          )}
+        </div>
       </motion.div>
-
-      {/* ═══ Recent classrooms — collapsible ═══ */}
-      {classrooms.length > 0 && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="relative z-10 mt-10 w-full max-w-6xl flex flex-col items-center"
-        >
-          {/* Trigger — divider-line with centered text */}
-          <div className="group w-full flex items-center gap-4 py-2">
-            <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
-            <div className="shrink-0 flex items-center gap-3 text-[13px] text-muted-foreground/60 select-none">
-              <button
-                onClick={() => persistRecentOpen(!recentOpen)}
-                className="flex items-center gap-2 hover:text-foreground/70 transition-colors cursor-pointer"
-              >
-                <Clock className="size-3.5" />
-                {t('classroom.recentClassrooms')}
-                <span className="text-[11px] tabular-nums opacity-60">{classrooms.length}</span>
-                <motion.div
-                  animate={{ rotate: recentOpen ? 180 : 0 }}
-                  transition={{ duration: 0.3, ease: 'easeInOut' }}
-                >
-                  <ChevronDown className="size-3.5" />
-                </motion.div>
-              </button>
-
-              {/* Search toggle — icon that expands into an input in place */}
-              <AnimatePresence initial={false}>
-                {!searchOpen ? (
-                  <motion.button
-                    key="search-icon"
-                    ref={searchButtonRef}
-                    type="button"
-                    aria-label={t('classroom.searchAriaLabel')}
-                    onClick={() => {
-                      setSearchOpen(true);
-                      if (!recentOpen) persistRecentOpen(true);
-                      requestAnimationFrame(() => searchInputRef.current?.focus());
-                    }}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.12, ease: 'easeOut' }}
-                    className="flex items-center justify-center size-6 rounded-full text-muted-foreground/50 hover:text-foreground/70 hover:bg-muted/50 transition-colors cursor-pointer"
-                  >
-                    <Search className="size-3.5" />
-                  </motion.button>
-                ) : (
-                  <motion.div
-                    key="search-input"
-                    initial={{ opacity: 0, width: 0 }}
-                    animate={{ opacity: 1, width: 200 }}
-                    exit={{ opacity: 0, width: 0 }}
-                    transition={{ duration: 0.18, ease: [0.25, 0.1, 0.25, 1] }}
-                    className="overflow-hidden"
-                  >
-                    <InputGroup
-                      className={cn(
-                        'h-7 text-[12px] rounded-full bg-muted/40 border-transparent shadow-none',
-                        'transition-colors',
-                        'hover:bg-muted/60',
-                        'has-[[data-slot=input-group-control]:focus-visible]:bg-muted/60',
-                        'has-[[data-slot=input-group-control]:focus-visible]:border-transparent',
-                        'has-[[data-slot=input-group-control]:focus-visible]:ring-0',
-                      )}
-                    >
-                      <InputGroupInput
-                        ref={searchInputRef}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Escape') {
-                            e.preventDefault();
-                            if (searchQuery) {
-                              setSearchQuery('');
-                            } else {
-                              setSearchOpen(false);
-                              requestAnimationFrame(() => searchButtonRef.current?.focus());
-                            }
-                          }
-                        }}
-                        onBlur={() => {
-                          if (!searchQuery) {
-                            setSearchOpen(false);
-                          }
-                        }}
-                        placeholder={t('classroom.searchPlaceholder')}
-                        aria-label={t('classroom.searchAriaLabel')}
-                        className="h-7 pl-3 placeholder:text-muted-foreground/50"
-                      />
-                      {searchQuery && (
-                        <InputGroupButton
-                          size="icon-xs"
-                          aria-label={t('classroom.clearSearch')}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setSearchQuery('');
-                            searchInputRef.current?.focus();
-                          }}
-                        >
-                          <X />
-                        </InputGroupButton>
-                      )}
-                    </InputGroup>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <button
-                onClick={triggerFileSelect}
-                disabled={importing}
-                className="group/import grid grid-cols-[auto_0fr] hover:grid-cols-[auto_1fr] items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] text-muted-foreground/35 hover:text-muted-foreground/70 hover:bg-muted/50 transition-all duration-200 cursor-pointer"
-              >
-                <Upload className="size-3" />
-                <span className="overflow-hidden opacity-0 group-hover/import:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                  {t('import.classroom')}
-                </span>
-              </button>
-              {PPTX_IMPORT_ENABLED && (
-                <button
-                  onClick={triggerPptxFileSelect}
-                  disabled={pptxImporting}
-                  className="group/import-pptx grid grid-cols-[auto_0fr] hover:grid-cols-[auto_1fr] items-center gap-1 rounded-full px-1.5 py-0.5 text-[12px] text-muted-foreground/35 hover:text-muted-foreground/70 hover:bg-muted/50 transition-all duration-200 cursor-pointer"
-                >
-                  <Presentation className="size-3" />
-                  <span className="overflow-hidden opacity-0 group-hover/import-pptx:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-                    {t('import.pptx')}
-                  </span>
-                </button>
-              )}
-            </div>
-            <div className="flex-1 h-px bg-border/40 group-hover:bg-border/70 transition-colors" />
-          </div>
-
-          {/* Expandable content */}
-          <AnimatePresence>
-            {recentOpen && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-                className="w-full overflow-hidden"
-              >
-                {searchQuery.trim() && filteredClassrooms.length === 0 ? (
-                  <div className="pt-8 pb-2 text-center text-[13px] text-muted-foreground/60">
-                    {t('classroom.searchEmpty')}
-                  </div>
-                ) : (
-                  <div className="pt-8 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-8">
-                    {filteredClassrooms.map((classroom, i) => (
-                      <motion.div
-                        key={classroom.id}
-                        initial={{ opacity: 0, y: 16 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          delay: i * 0.04,
-                          duration: 0.35,
-                          ease: 'easeOut',
-                        }}
-                      >
-                        <ClassroomCard
-                          classroom={classroom}
-                          slide={thumbnails[classroom.id]}
-                          formatDate={formatDate}
-                          onDelete={handleDelete}
-                          onRename={handleRename}
-                          confirmingDelete={pendingDeleteId === classroom.id}
-                          onConfirmDelete={() => confirmDelete(classroom.id)}
-                          onCancelDelete={() => setPendingDeleteId(null)}
-                          onClick={() => router.push(`/classroom/${classroom.id}`)}
-                        />
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-      )}
 
       {/* Footer — flows with content, at the very end */}
       <div className="mt-auto pt-12 pb-4 text-center text-xs text-muted-foreground/40">
@@ -1236,243 +925,6 @@ function GreetingBar() {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
-
-// ─── Classroom Card — clean, minimal style ──────────────────────
-function ClassroomCard({
-  classroom,
-  slide,
-  formatDate,
-  onDelete,
-  onRename,
-  confirmingDelete,
-  onConfirmDelete,
-  onCancelDelete,
-  onClick,
-}: {
-  classroom: StageListItem;
-  slide?: Slide;
-  formatDate: (ts: number) => string;
-  onDelete: (id: string, e: React.MouseEvent) => void;
-  onRename: (id: string, newName: string) => void;
-  confirmingDelete: boolean;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
-  onClick: () => void;
-}) {
-  const { t } = useI18n();
-  const thumbRef = useRef<HTMLDivElement>(null);
-  const [thumbWidth, setThumbWidth] = useState(0);
-  const [editing, setEditing] = useState(false);
-  const [nameDraft, setNameDraft] = useState('');
-  const nameInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const el = thumbRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(([entry]) => {
-      setThumbWidth(Math.round(entry.contentRect.width));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    if (editing) nameInputRef.current?.focus();
-  }, [editing]);
-
-  const isTaskEngineMode = classroom.taskEngineMode === true;
-  const showModeBadge = classroom.interactiveMode || isTaskEngineMode;
-  const ModeBadgeIcon = isTaskEngineMode ? Sparkles : Atom;
-  const modeBadgeLabel = isTaskEngineMode ? 'Vocational Mode' : t('toolbar.interactiveModeLabel');
-
-  const startRename = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setNameDraft(classroom.name);
-    setEditing(true);
-  };
-
-  const commitRename = () => {
-    if (!editing) return;
-    const trimmed = nameDraft.trim();
-    if (trimmed && trimmed !== classroom.name) {
-      onRename(classroom.id, trimmed);
-    }
-    setEditing(false);
-  };
-
-  return (
-    <div className="group cursor-pointer" onClick={confirmingDelete ? undefined : onClick}>
-      {/* Thumbnail — large radius, no border, subtle bg */}
-      <div
-        ref={thumbRef}
-        className="relative w-full aspect-[16/9] rounded-2xl bg-slate-100 dark:bg-slate-800/80 overflow-hidden transition-transform duration-200 group-hover:scale-[1.02]"
-      >
-        {slide && thumbWidth > 0 ? (
-          <SlideThumbnail
-            slide={slide}
-            size={thumbWidth}
-            viewportSize={slide.viewportSize ?? 1000}
-            viewportRatio={slide.viewportRatio ?? 0.5625}
-          />
-        ) : !slide ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="size-12 rounded-2xl bg-gradient-to-br from-violet-100 to-blue-100 dark:from-violet-900/30 dark:to-blue-900/30 flex items-center justify-center">
-              <span className="text-xl opacity-50">📄</span>
-            </div>
-          </div>
-        ) : null}
-
-        {showModeBadge && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                aria-label={modeBadgeLabel}
-                onClick={(e) => e.stopPropagation()}
-                className={cn(
-                  'absolute bottom-2 left-2 inline-flex items-center justify-center size-5 rounded-full bg-white/70 dark:bg-slate-900/60 backdrop-blur-sm shadow-sm z-10',
-                  isTaskEngineMode
-                    ? 'text-amber-600 dark:text-amber-300 ring-1 ring-amber-500/35'
-                    : 'text-cyan-600 dark:text-cyan-300 ring-1 ring-cyan-500/30',
-                )}
-              >
-                <ModeBadgeIcon className="size-3" />
-              </span>
-            </TooltipTrigger>
-            {/* Negative sideOffset compensates for the global Tooltip Arrow's
-                rotate-45 bounding box, which Radix reserves as spacing. */}
-            <TooltipContent
-              side="top"
-              align="start"
-              sideOffset={-4}
-              collisionPadding={0}
-              className="text-xs"
-            >
-              {modeBadgeLabel}
-            </TooltipContent>
-          </Tooltip>
-        )}
-
-        {/* Delete — top-right, only on hover */}
-        <AnimatePresence>
-          {!confirmingDelete && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-            >
-              <Button
-                size="icon"
-                variant="ghost"
-                className="absolute top-2 right-2 size-7 opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 hover:bg-destructive/80 text-white hover:text-white backdrop-blur-sm rounded-full"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(classroom.id, e);
-                }}
-              >
-                <Trash2 className="size-3.5" />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="absolute top-2 right-11 size-7 opacity-0 group-hover:opacity-100 transition-opacity bg-black/30 hover:bg-black/50 text-white hover:text-white backdrop-blur-sm rounded-full"
-                onClick={startRename}
-              >
-                <Pencil className="size-3.5" />
-              </Button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Inline delete confirmation overlay */}
-        <AnimatePresence>
-          {confirmingDelete && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-black/50 backdrop-blur-[6px]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="text-[13px] font-medium text-white/90">
-                {t('classroom.deleteConfirmTitle')}?
-              </span>
-              <div className="flex gap-2">
-                <button
-                  className="px-3.5 py-1 rounded-lg text-[12px] font-medium bg-white/15 text-white/80 hover:bg-white/25 backdrop-blur-sm transition-colors"
-                  onClick={onCancelDelete}
-                >
-                  {t('common.cancel')}
-                </button>
-                <button
-                  className="px-3.5 py-1 rounded-lg text-[12px] font-medium bg-red-500/90 text-white hover:bg-red-500 transition-colors"
-                  onClick={onConfirmDelete}
-                >
-                  {t('classroom.delete')}
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* Info — outside the thumbnail */}
-      <div className="mt-2.5 px-1 flex items-center gap-2">
-        <span className="shrink-0 inline-flex items-center rounded-full bg-violet-100 dark:bg-violet-900/30 px-2 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400">
-          {classroom.sceneCount} {t('classroom.slides')} · {formatDate(classroom.updatedAt)}
-        </span>
-        {editing ? (
-          <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
-            <input
-              ref={nameInputRef}
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitRename();
-                if (e.key === 'Escape') setEditing(false);
-              }}
-              onBlur={commitRename}
-              maxLength={100}
-              placeholder={t('classroom.renamePlaceholder')}
-              className="w-full bg-transparent border-b border-violet-400/60 text-[15px] font-medium text-foreground/90 outline-none placeholder:text-muted-foreground/40"
-            />
-          </div>
-        ) : (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <p
-                className="font-medium text-[15px] truncate text-foreground/90 min-w-0 cursor-text"
-                onDoubleClick={startRename}
-              >
-                {classroom.name}
-              </p>
-            </TooltipTrigger>
-            <TooltipContent
-              side="bottom"
-              sideOffset={4}
-              className="!max-w-[min(90vw,32rem)] break-words whitespace-normal"
-            >
-              <div className="flex items-center gap-1.5">
-                <span className="break-all">{classroom.name}</span>
-                <button
-                  className="shrink-0 p-0.5 rounded hover:bg-foreground/10 transition-colors"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(classroom.name);
-                    toast.success(t('classroom.nameCopied'));
-                  }}
-                >
-                  <Copy className="size-3 opacity-60" />
-                </button>
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        )}
-      </div>
     </div>
   );
 }

@@ -20,6 +20,8 @@ export interface GenerationSessionState {
   requestedStageId?: string;
   /** Classroom mode requested by the embedding host after generation completes. */
   requestedMode?: RequestedClassroomMode;
+  /** Validated ReachAcademy Portal page to return to after authoring. */
+  returnTo?: string;
   requirements: UserRequirements;
   pdfText: string;
   documentSources?: SessionDocumentSource[];

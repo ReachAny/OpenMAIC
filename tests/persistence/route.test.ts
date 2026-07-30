@@ -37,14 +37,43 @@ describe('embedded persistence route', () => {
     });
   });
 
+  it('rejects global document enumeration before opening a database connection', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://document-list-disabled-test');
+    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
+    const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
+    const poolFactory = vi.fn();
+
+    const response = await handlePersistenceRequest(
+      new Request('http://localhost/api/persistence/documents', {
+        headers: { authorization: 'Bearer test-token' },
+      }),
+      { poolFactory: poolFactory as never },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+        message: 'document listing is disabled; address a document by stageId',
+      },
+    });
+    expect(poolFactory).not.toHaveBeenCalled();
+  });
+
   it('retries initialization on the next request after a failed pool initialization', async () => {
     const ensureSchema = vi
       .fn()
       .mockRejectedValueOnce(new Error('postgres is still starting'))
       .mockResolvedValue(undefined);
     const ensureDocumentSchema = vi.fn().mockResolvedValue(undefined);
-    const failedPool = { end: vi.fn().mockResolvedValue(undefined) };
-    const workingPool = { end: vi.fn().mockResolvedValue(undefined) };
+    const failedPool = {
+      query: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
+    const workingPool = {
+      query: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
 
     vi.doMock('@openmaic/storage/runtime/pg', () => ({
       ensureSchema,
@@ -147,7 +176,10 @@ describe('embedded persistence route', () => {
     vi.stubEnv('DATABASE_URL', 'postgres://adapter-test');
     vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
-    const pool = { end: vi.fn().mockResolvedValue(undefined) };
+    const pool = {
+      query: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+    };
 
     const put = await handlePersistenceRequest(
       new Request('http://localhost/api/persistence/documents/stage%2Fslash', {

@@ -91,6 +91,15 @@ function jsonError(status: number, code: string, message: string): Response {
   return Response.json({ error: { code, message } }, { status });
 }
 
+function isDocumentListRequest(request: Request): boolean {
+  if (request.method.toUpperCase() !== 'GET') return false;
+  const pathname = new URL(request.url).pathname;
+  const routePath = pathname.startsWith(ROUTE_PREFIX)
+    ? pathname.slice(ROUTE_PREFIX.length)
+    : pathname;
+  return routePath === '/documents' || routePath === '/documents/';
+}
+
 async function createPersistenceHandler(
   connectionString: string,
   poolFactory: PoolFactory,
@@ -257,6 +266,13 @@ export async function handlePersistenceRequest(
   const stage = resolveStage(request);
   if (stage === undefined) {
     return jsonError(400, 'PERSISTENCE_STAGE_UNKNOWN', 'unknown persistence stage');
+  }
+  if (isDocumentListRequest(request)) {
+    return jsonError(
+      403,
+      'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+      'document listing is disabled; address a document by stageId',
+    );
   }
   if (STAGE_SCHEMAS[stage].readOnly && MUTATING_METHODS.has(request.method.toUpperCase())) {
     return jsonError(
