@@ -19,10 +19,10 @@ import {
 
 describe('isTTSProviderConfigured', () => {
   it('key-requiring provider needs an API key', () => {
-    expect(isTTSProviderConfigured('openai-tts', {})).toBe(false);
-    expect(isTTSProviderConfigured('openai-tts', { apiKey: '  ' })).toBe(false);
-    expect(isTTSProviderConfigured('openai-tts', { apiKey: 'sk-x' })).toBe(true);
-    expect(isTTSProviderConfigured('openai-tts', { isServerConfigured: true })).toBe(true);
+    expect(isTTSProviderConfigured('doubao-tts', {})).toBe(false);
+    expect(isTTSProviderConfigured('doubao-tts', { apiKey: '  ' })).toBe(false);
+    expect(isTTSProviderConfigured('doubao-tts', { apiKey: 'ark-x' })).toBe(true);
+    expect(isTTSProviderConfigured('doubao-tts', { isServerConfigured: true })).toBe(true);
   });
 
   it('keyless local provider is NOT shown from the registry defaultBaseUrl alone (Lemonade fix)', () => {
@@ -58,19 +58,19 @@ describe('isTTSProviderConfigured', () => {
 
 describe('isTTSProviderEnabled', () => {
   it('honors the per-provider enabled flag (default on)', () => {
-    expect(isTTSProviderEnabled('openai-tts', { apiKey: 'k' })).toBe(true);
-    expect(isTTSProviderEnabled('openai-tts', { apiKey: 'k', enabled: true })).toBe(true);
-    expect(isTTSProviderEnabled('openai-tts', { apiKey: 'k', enabled: false })).toBe(false);
+    expect(isTTSProviderEnabled('doubao-tts', { apiKey: 'k' })).toBe(true);
+    expect(isTTSProviderEnabled('doubao-tts', { apiKey: 'k', enabled: true })).toBe(true);
+    expect(isTTSProviderEnabled('doubao-tts', { apiKey: 'k', enabled: false })).toBe(false);
   });
 
   it('server-disable overrides the user toggle (server precedence)', () => {
     expect(
-      isTTSProviderEnabled('openai-tts', { apiKey: 'k', enabled: true, serverDisabled: true }),
+      isTTSProviderEnabled('doubao-tts', { apiKey: 'k', enabled: true, serverDisabled: true }),
     ).toBe(false);
   });
 
   it('an unconfigured provider is never enabled', () => {
-    expect(isTTSProviderEnabled('openai-tts', { enabled: true })).toBe(false);
+    expect(isTTSProviderEnabled('doubao-tts', { enabled: true })).toBe(false);
     expect(isTTSProviderEnabled('lemonade-tts', { enabled: true })).toBe(false);
   });
 
@@ -87,7 +87,7 @@ describe('isTTSProviderEnabled', () => {
 
 describe('listEnabledTTSProviderIds / hasAnyEnabledTTSProvider', () => {
   const config: Record<string, TTSEnablementConfig> = {
-    'openai-tts': { apiKey: 'k', enabled: true },
+    'doubao-tts': { apiKey: 'k', enabled: true },
     'qwen-tts': { apiKey: 'k', enabled: false }, // configured but user-disabled
     'lemonade-tts': {}, // unconfigured (no explicit baseUrl)
     'voxcpm-tts': { baseUrl: 'http://127.0.0.1:8000', serverDisabled: true }, // server off
@@ -96,7 +96,7 @@ describe('listEnabledTTSProviderIds / hasAnyEnabledTTSProvider', () => {
   };
 
   it('lists only enabled providers in canonical registry order', () => {
-    expect(listEnabledTTSProviderIds(config)).toEqual(['openai-tts', 'custom-tts-foo']);
+    expect(listEnabledTTSProviderIds(config)).toEqual(['doubao-tts', 'custom-tts-foo']);
   });
 
   it('hasAny reflects emptiness', () => {

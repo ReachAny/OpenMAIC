@@ -5,13 +5,13 @@
  * Follows the same architecture as lib/ai/providers.ts for consistency.
  *
  * Currently Supported Providers:
- * - OpenAI TTS: https://platform.openai.com/docs/guides/text-to-speech
  * - Azure TTS: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech
  * - GLM TTS: https://docs.bigmodel.cn/cn/guide/models/sound-and-video/glm-tts
  * - Qwen TTS: https://bailian.console.aliyun.com/
  * - MiniMax TTS: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
  * - Doubao TTS: https://www.volcengine.com/docs/6561/1257543
  * - ElevenLabs TTS: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
+ * - Custom OpenAI-compatible TTS endpoints
  * - Browser Native: Web Speech API (client-side only)
  *
  * HOW TO ADD A NEW PROVIDER:
@@ -154,9 +154,6 @@ export async function generateTTS(
   }
 
   switch (config.providerId) {
-    case 'openai-tts':
-      return await generateOpenAITTS(config, text);
-
     case 'azure-tts':
       return await generateAzureTTS(config, text);
 
@@ -186,22 +183,24 @@ export async function generateTTS(
 
     default:
       if (isCustomTTSProvider(config.providerId)) {
-        return await generateOpenAITTS(config, text);
+        return await generateOpenAICompatibleTTS(config, text);
       }
       throw new Error(`Unsupported TTS provider: ${config.providerId}`);
   }
 }
 
 /**
- * OpenAI TTS implementation (direct API call with explicit UTF-8 encoding)
+ * Generic OpenAI-compatible TTS implementation for custom providers.
  */
-async function generateOpenAITTS(
+async function generateOpenAICompatibleTTS(
   config: TTSModelConfig,
   text: string,
 ): Promise<TTSGenerationResult> {
-  const baseUrl = config.baseUrl || TTS_PROVIDERS['openai-tts'].defaultBaseUrl;
+  const baseUrl = config.baseUrl?.replace(/\/+$/, '');
+  if (!baseUrl) {
+    throw new Error('Custom OpenAI-compatible TTS requires a base URL');
+  }
 
-  // Use gpt-4o-mini-tts for best quality and intelligent realtime applications
   const response = await fetch(`${baseUrl}/audio/speech`, {
     method: 'POST',
     headers: {
@@ -217,9 +216,11 @@ async function generateOpenAITTS(
   });
 
   if (!response.ok) {
-    throwIfTtsRateLimited('OpenAI', response.status);
+    throwIfTtsRateLimited('OpenAI-compatible TTS', response.status);
     const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(`OpenAI TTS API error: ${error.error?.message || response.statusText}`);
+    throw new Error(
+      `OpenAI-compatible TTS API error: ${error.error?.message || response.statusText}`,
+    );
   }
 
   const arrayBuffer = await response.arrayBuffer();

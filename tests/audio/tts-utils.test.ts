@@ -58,7 +58,7 @@ describe('splitLongSpeechActions', () => {
 
   it('returns actions untouched for a provider with no length limit', () => {
     const actions: Action[] = [speech('a', 'x'.repeat(5000))];
-    expect(splitLongSpeechActions(actions, 'openai-tts')).toBe(actions);
+    expect(splitLongSpeechActions(actions, 'azure-tts')).toBe(actions);
   });
 
   it('leaves short speech and non-speech actions unchanged', () => {

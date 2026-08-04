@@ -139,7 +139,6 @@ function getTTSProviderName(providerId: TTSProviderId, t: (key: string) => strin
     return cfg?.customName || providerId;
   }
   const names: Record<string, string> = {
-    'openai-tts': t('settings.providerOpenAITTS'),
     'azure-tts': t('settings.providerAzureTTS'),
     'glm-tts': t('settings.providerGLMTTS'),
     'qwen-tts': t('settings.providerQwenTTS'),

@@ -25,7 +25,7 @@ async function freshStore(persistedState?: Record<string, unknown>) {
   vi.resetModules();
   storage.clear();
   if (persistedState) {
-    storage.set('settings-storage', JSON.stringify({ state: persistedState, version: 4 }));
+    storage.set('settings-storage', JSON.stringify({ state: persistedState, version: 5 }));
   }
   const { useSettingsStore } = await import('@/lib/store/settings');
   return useSettingsStore;

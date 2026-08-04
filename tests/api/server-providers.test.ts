@@ -54,7 +54,7 @@ describe('GET /api/server-providers', () => {
       openrouter: {},
       openai: { models: ['operator-pinned-chat'] },
     });
-    mocks.getServerTTSProviders.mockReturnValue({ 'openai-tts': {} });
+    mocks.getServerTTSProviders.mockReturnValue({ 'doubao-tts': {} });
     mocks.getServerASRProviders.mockReturnValue({ 'openai-whisper': {} });
     mocks.getServerPDFProviders.mockReturnValue({});
     mocks.getServerImageProviders.mockReturnValue({ 'openai-image': {} });
@@ -78,14 +78,14 @@ describe('GET /api/server-providers', () => {
       openrouter: { models: ['chat-alias'] },
       openai: { models: ['operator-pinned-chat'] },
     });
-    expect(body.tts['openai-tts'].models).toEqual(['audio_speech-alias']);
+    expect(body.tts['doubao-tts'].models).toEqual(['audio_speech-alias']);
     expect(body.asr['openai-whisper'].models).toEqual(['audio_transcription-alias']);
     expect(body.image['openai-image'].models).toEqual(['image_generation-alias']);
     expect(body.video.sora.models).toEqual(['video_generation-alias']);
     expect(mocks.fetchModels).toHaveBeenCalledTimes(5);
     expect(mocks.fetchModels).toHaveBeenCalledWith(
-      'https://catalog.example/openai-tts/v1',
-      'openai-tts-key',
+      'https://catalog.example/doubao-tts/v1',
+      'doubao-tts-key',
       { mode: 'audio_speech' },
     );
     expect(mocks.fetchModels).not.toHaveBeenCalledWith(

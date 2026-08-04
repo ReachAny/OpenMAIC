@@ -79,119 +79,6 @@ export const MINIMAX_TTS_MODELS = [
 ] as const;
 
 export const TTS_PROVIDERS: Record<BuiltInTTSProviderId, TTSProviderConfig> = {
-  'openai-tts': {
-    id: 'openai-tts',
-    name: 'OpenAI TTS',
-    requiresApiKey: true,
-    defaultBaseUrl: 'https://api.openai.com/v1',
-    icon: '/logos/openai.svg',
-    models: [
-      { id: 'gpt-4o-mini-tts', name: 'GPT-4o Mini TTS' },
-      { id: 'tts-1', name: 'TTS-1' },
-      { id: 'tts-1-hd', name: 'TTS-1 HD' },
-    ],
-    defaultModelId: 'gpt-4o-mini-tts',
-    voices: [
-      // Recommended voices (best quality)
-      {
-        id: 'marin',
-        name: 'Marin',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceMarin',
-        compatibleModels: ['gpt-4o-mini-tts'],
-      },
-      {
-        id: 'cedar',
-        name: 'Cedar',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceCedar',
-        compatibleModels: ['gpt-4o-mini-tts'],
-      },
-      // Standard voices (alphabetical)
-      {
-        id: 'alloy',
-        name: 'Alloy',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceAlloy',
-      },
-      {
-        id: 'ash',
-        name: 'Ash',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceAsh',
-      },
-      {
-        id: 'ballad',
-        name: 'Ballad',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceBallad',
-      },
-      {
-        id: 'coral',
-        name: 'Coral',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceCoral',
-      },
-      {
-        id: 'echo',
-        name: 'Echo',
-        language: 'en',
-        gender: 'male',
-        description: 'voiceEcho',
-      },
-      {
-        id: 'fable',
-        name: 'Fable',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceFable',
-      },
-      {
-        id: 'nova',
-        name: 'Nova',
-        language: 'en',
-        gender: 'female',
-        description: 'voiceNova',
-      },
-      {
-        id: 'onyx',
-        name: 'Onyx',
-        language: 'en',
-        gender: 'male',
-        description: 'voiceOnyx',
-      },
-      {
-        id: 'sage',
-        name: 'Sage',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceSage',
-      },
-      {
-        id: 'shimmer',
-        name: 'Shimmer',
-        language: 'en',
-        gender: 'female',
-        description: 'voiceShimmer',
-      },
-      {
-        id: 'verse',
-        name: 'Verse',
-        language: 'en',
-        gender: 'neutral',
-        description: 'voiceVerse',
-      },
-    ],
-    supportedFormats: ['mp3', 'opus', 'aac', 'flac'],
-    speedRange: { min: 0.25, max: 4.0, default: 1.0 },
-  },
-
   'azure-tts': {
     id: 'azure-tts',
     name: 'Azure TTS',
@@ -1274,7 +1161,6 @@ export const ASR_PROVIDERS: Record<BuiltInASRProviderId, ASRProviderConfig> = {
  * Used when switching providers or testing a non-active provider.
  */
 export const DEFAULT_TTS_VOICES: Record<BuiltInTTSProviderId, string> = {
-  'openai-tts': 'alloy',
   'azure-tts': 'zh-CN-XiaoxiaoNeural',
   'glm-tts': 'tongtong',
   'qwen-tts': 'Cherry',
@@ -1287,7 +1173,6 @@ export const DEFAULT_TTS_VOICES: Record<BuiltInTTSProviderId, string> = {
 };
 
 export const DEFAULT_TTS_MODELS: Record<BuiltInTTSProviderId, string> = {
-  'openai-tts': 'gpt-4o-mini-tts',
   'azure-tts': '',
   'glm-tts': 'glm-tts',
   'qwen-tts': 'qwen3-tts-flash',
@@ -1298,6 +1183,10 @@ export const DEFAULT_TTS_MODELS: Record<BuiltInTTSProviderId, string> = {
   'lemonade-tts': 'kokoro-v1',
   'browser-native-tts': '',
 };
+
+/** ReachAny product defaults for a fresh or migrated TTS selection. */
+export const DEFAULT_TTS_PROVIDER_ID: BuiltInTTSProviderId = 'doubao-tts';
+export const DEFAULT_TTS_VOICE_ID = DEFAULT_TTS_VOICES[DEFAULT_TTS_PROVIDER_ID];
 
 /**
  * Get all available TTS providers (built-in + custom)

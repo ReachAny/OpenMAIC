@@ -5,12 +5,12 @@
  * with extensible architecture to support multiple providers.
  *
  * Currently Supported TTS Providers:
- * - OpenAI TTS (https://platform.openai.com/docs/guides/text-to-speech)
  * - Azure TTS (https://learn.microsoft.com/en-us/azure/ai-services/speech-service/text-to-speech)
  * - GLM TTS (https://docs.bigmodel.cn/cn/guide/models/sound-and-video/glm-tts)
  * - Qwen TTS (https://bailian.console.aliyun.com/)
  * - Doubao TTS (https://www.volcengine.com/docs/6561/1257543)
  * - Browser Native TTS (Web Speech API, client-side only)
+ * - Custom OpenAI-compatible TTS endpoints
  *
  * Currently Supported ASR Providers:
  * - OpenAI Whisper (https://platform.openai.com/docs/guides/speech-to-text)
@@ -80,7 +80,6 @@
  * Keep in sync with TTS_PROVIDERS registry in constants.ts
  */
 export type BuiltInTTSProviderId =
-  | 'openai-tts'
   | 'azure-tts'
   | 'glm-tts'
   | 'qwen-tts'

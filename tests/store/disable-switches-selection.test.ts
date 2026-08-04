@@ -79,10 +79,10 @@ describe('disabling the active provider switches selection away', () => {
 
   it('tts: disabling the selected provider falls back to browser TTS', () => {
     const s = useSettingsStore.getState();
-    s.setTTSProvider('openai-tts');
-    expect(useSettingsStore.getState().ttsProviderId).toBe('openai-tts');
+    s.setTTSProvider('azure-tts');
+    expect(useSettingsStore.getState().ttsProviderId).toBe('azure-tts');
 
-    s.setTTSProviderConfig('openai-tts', { enabled: false });
+    s.setTTSProviderConfig('azure-tts', { enabled: false });
     expect(useSettingsStore.getState().ttsProviderId).toBe('browser-native-tts');
   });
 

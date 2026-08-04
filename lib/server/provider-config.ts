@@ -74,7 +74,6 @@ const LLM_ENV_MAP: Record<string, string> = {
 };
 
 const TTS_ENV_MAP: Record<string, string> = {
-  TTS_OPENAI: 'openai-tts',
   TTS_AZURE: 'azure-tts',
   TTS_GLM: 'glm-tts',
   TTS_QWEN: 'qwen-tts',
@@ -94,6 +93,8 @@ const TTS_DISABLE_ENV_MAP: Record<string, string> = {
   ...TTS_ENV_MAP,
   TTS_BROWSER_NATIVE: 'browser-native-tts',
 };
+
+const REMOVED_FIRST_PARTY_TTS_PROVIDER_IDS = new Set(['openai-tts']);
 
 const ASR_ENV_MAP: Record<string, string> = {
   ASR_OPENAI: 'openai-whisper',
@@ -264,6 +265,7 @@ function collectDisabledTTS(
   const disabled = new Set<string>();
   if (yamlTts) {
     for (const [id, entry] of Object.entries(yamlTts)) {
+      if (REMOVED_FIRST_PARTY_TTS_PROVIDER_IDS.has(id)) continue;
       if (entry?.enabled === false) disabled.add(id);
     }
   }
@@ -378,6 +380,13 @@ function requireApiKeyAndBaseUrl(
   return section;
 }
 
+function dropRemovedFirstPartyTTSProviders(
+  section: Record<string, ServerProviderEntry>,
+): Record<string, ServerProviderEntry> {
+  for (const providerId of REMOVED_FIRST_PARTY_TTS_PROVIDER_IDS) delete section[providerId];
+  return section;
+}
+
 function buildConfig(yamlData: YamlData): ServerConfig {
   const image = applyOpenAIImageFallback(
     loadEnvSection(IMAGE_ENV_MAP, yamlData.image, {
@@ -390,9 +399,11 @@ function buildConfig(yamlData: YamlData): ServerConfig {
     providers: loadEnvSection(LLM_ENV_MAP, yamlData.providers, {
       keylessProviders: new Set(['ollama', 'lemonade']),
     }),
-    tts: loadEnvSection(TTS_ENV_MAP, yamlData.tts, {
-      keylessProviders: new Set(['voxcpm-tts', 'lemonade-tts']),
-    }),
+    tts: dropRemovedFirstPartyTTSProviders(
+      loadEnvSection(TTS_ENV_MAP, yamlData.tts, {
+        keylessProviders: new Set(['voxcpm-tts', 'lemonade-tts']),
+      }),
+    ),
     asr: loadEnvSection(ASR_ENV_MAP, yamlData.asr, {
       keylessProviders: new Set(['lemonade-asr']),
     }),

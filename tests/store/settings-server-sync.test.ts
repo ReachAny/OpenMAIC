@@ -58,13 +58,20 @@ vi.mock('@/lib/ai/providers', () => ({
 
 vi.mock('@/lib/audio/constants', () => ({
   TTS_PROVIDERS: {
-    'openai-tts': {
-      id: 'openai-tts',
-      name: 'OpenAI TTS',
+    'doubao-tts': {
+      id: 'doubao-tts',
+      name: 'Doubao TTS',
       requiresApiKey: true,
-      defaultModelId: 'gpt-4o-mini-tts',
-      models: [{ id: 'gpt-4o-mini-tts', name: 'GPT-4o Mini TTS' }],
-      voices: [{ id: 'alloy', name: 'Alloy', language: 'en', gender: 'neutral' }],
+      defaultModelId: '',
+      models: [],
+      voices: [
+        {
+          id: 'zh_female_vv_uranus_bigtts',
+          name: 'Vivi 2.0',
+          language: 'zh-CN',
+          gender: 'female',
+        },
+      ],
       supportedFormats: ['mp3'],
     },
     'azure-tts': {
@@ -108,9 +115,12 @@ vi.mock('@/lib/audio/constants', () => ({
     },
   },
   DEFAULT_TTS_VOICES: {
-    'openai-tts': 'alloy',
+    'doubao-tts': 'zh_female_vv_uranus_bigtts',
+    'azure-tts': 'zh-CN-XiaoxiaoNeural',
     'browser-native-tts': 'default',
   },
+  DEFAULT_TTS_PROVIDER_ID: 'doubao-tts',
+  DEFAULT_TTS_VOICE_ID: 'zh_female_vv_uranus_bigtts',
 }));
 
 vi.mock('@/lib/audio/types', () => ({
@@ -705,44 +715,45 @@ describe('fetchServerProviders — TTS stale selection', () => {
     return useSettingsStore;
   }
 
-  it('falls back to browser-native-tts when selected TTS provider loses server config', async () => {
+  it('falls back to the Doubao default when selected TTS provider loses server config', async () => {
     const store = await getStore();
 
-    mockServerResponse({ tts: { 'openai-tts': {} } });
+    mockServerResponse({ tts: { 'azure-tts': {} } });
     await store.getState().fetchServerProviders();
-    store.getState().setTTSProvider('openai-tts');
-    expect(store.getState().ttsProviderId).toBe('openai-tts');
+    store.getState().setTTSProvider('azure-tts');
+    expect(store.getState().ttsProviderId).toBe('azure-tts');
 
     mockServerResponse({});
     await store.getState().fetchServerProviders();
 
-    expect(store.getState().ttsProviderId).toBe('browser-native-tts');
+    expect(store.getState().ttsProviderId).toBe('doubao-tts');
+    expect(store.getState().ttsVoice).toBe('zh_female_vv_uranus_bigtts');
   });
 
   it('falls back to remaining server TTS provider when selected one is removed', async () => {
     const store = await getStore();
 
-    mockServerResponse({ tts: { 'openai-tts': {}, 'azure-tts': {} } });
+    mockServerResponse({ tts: { 'azure-tts': {}, 'doubao-tts': {} } });
     await store.getState().fetchServerProviders();
-    store.getState().setTTSProvider('openai-tts');
+    store.getState().setTTSProvider('azure-tts');
 
-    mockServerResponse({ tts: { 'azure-tts': {} } });
+    mockServerResponse({ tts: { 'doubao-tts': {} } });
     await store.getState().fetchServerProviders();
 
-    expect(store.getState().ttsProviderId).toBe('azure-tts');
+    expect(store.getState().ttsProviderId).toBe('doubao-tts');
   });
 
   it('keeps TTS provider when it is still server-configured', async () => {
     const store = await getStore();
 
-    mockServerResponse({ tts: { 'openai-tts': {} } });
+    mockServerResponse({ tts: { 'azure-tts': {} } });
     await store.getState().fetchServerProviders();
-    store.getState().setTTSProvider('openai-tts');
+    store.getState().setTTSProvider('azure-tts');
 
-    mockServerResponse({ tts: { 'openai-tts': {} } });
+    mockServerResponse({ tts: { 'azure-tts': {} } });
     await store.getState().fetchServerProviders();
 
-    expect(store.getState().ttsProviderId).toBe('openai-tts');
+    expect(store.getState().ttsProviderId).toBe('azure-tts');
   });
 });
 
@@ -1170,12 +1181,12 @@ describe('fetchServerProviders — Video stale selection', () => {
   it('stores discovered TTS and ASR aliases as selectable models and falls back to the first', async () => {
     const store = await getStore();
     store.setState({
-      ttsProviderId: 'openai-tts',
+      ttsProviderId: 'doubao-tts',
       asrProviderId: 'openai-whisper',
       ttsProvidersConfig: {
         ...store.getState().ttsProvidersConfig,
-        'openai-tts': {
-          ...store.getState().ttsProvidersConfig['openai-tts'],
+        'doubao-tts': {
+          ...store.getState().ttsProvidersConfig['doubao-tts'],
           modelId: 'stale-tts-model',
         },
       },
@@ -1188,13 +1199,13 @@ describe('fetchServerProviders — Video stale selection', () => {
       },
     });
     mockServerResponse({
-      tts: { 'openai-tts': { models: ['course-voice-a', 'course-voice-b'] } },
+      tts: { 'doubao-tts': { models: ['course-voice-a', 'course-voice-b'] } },
       asr: { 'openai-whisper': { models: ['course-transcribe-a'] } },
     });
 
     await store.getState().fetchServerProviders();
 
-    expect(store.getState().ttsProvidersConfig['openai-tts']).toMatchObject({
+    expect(store.getState().ttsProvidersConfig['doubao-tts']).toMatchObject({
       serverModels: ['course-voice-a', 'course-voice-b'],
       modelId: 'course-voice-a',
     });
@@ -1719,7 +1730,7 @@ describe('TTS provider enablement (#665)', () => {
   });
 
   it('first server-sync auto-enables TTS when a server provider exists', async () => {
-    mockServerResponse({ tts: { 'openai-tts': {} } });
+    mockServerResponse({ tts: { 'doubao-tts': {} } });
     const store = await getStore();
     expect(store.getState().ttsEnabled).toBe(false);
     await store.getState().fetchServerProviders();
@@ -1763,31 +1774,73 @@ describe('TTS provider enablement (#665)', () => {
     expect(cfg['browser-native-tts'].enabled).toBe(false);
   });
 
+  it('selects Doubao/Vivi by default on a fresh install', async () => {
+    const store = await getStore();
+    expect(store.getState().ttsProviderId).toBe('doubao-tts');
+    expect(store.getState().ttsVoice).toBe('zh_female_vv_uranus_bigtts');
+  });
+
+  it('v4→v5 migrates persisted OpenAI TTS selections and overrides to Doubao/Vivi', async () => {
+    storage.set(
+      'settings-storage',
+      JSON.stringify({
+        version: 4,
+        state: {
+          ttsModel: 'openai-tts',
+          ttsProviderId: 'openai-tts',
+          ttsVoice: 'alloy',
+          ttsProvidersConfig: {
+            'openai-tts': { apiKey: 'legacy-key', baseUrl: '', enabled: true },
+          },
+          asrProvidersConfig: {},
+          agentVoiceOverrides: {
+            'default-2': {
+              providerId: 'openai-tts',
+              modelId: 'gpt-4o-mini-tts',
+              voiceId: 'alloy',
+            },
+          },
+        },
+      }),
+    );
+
+    const store = await getStore();
+    const state = store.getState();
+    expect(state.ttsModel).toBe('doubao-tts');
+    expect(state.ttsProviderId).toBe('doubao-tts');
+    expect(state.ttsVoice).toBe('zh_female_vv_uranus_bigtts');
+    expect((state.ttsProvidersConfig as Record<string, unknown>)['openai-tts']).toBeUndefined();
+    expect(state.agentVoiceOverrides['default-2']).toEqual({
+      providerId: 'doubao-tts',
+      voiceId: 'zh_female_vv_uranus_bigtts',
+    });
+  });
+
   it('server force-disable sets serverDisabled and does NOT mark the provider managed', async () => {
-    mockServerResponse({ tts: { 'openai-tts': { disabled: true } } });
+    mockServerResponse({ tts: { 'doubao-tts': { disabled: true } } });
     const store = await getStore();
     await store.getState().fetchServerProviders();
-    const cfg = store.getState().ttsProvidersConfig['openai-tts'];
+    const cfg = store.getState().ttsProvidersConfig['doubao-tts'];
     expect(cfg.serverDisabled).toBe(true);
     expect(cfg.isServerConfigured).toBe(false);
   });
 
   it('a server-managed (not disabled) provider is marked configured, not disabled', async () => {
-    mockServerResponse({ tts: { 'openai-tts': {} } });
+    mockServerResponse({ tts: { 'doubao-tts': {} } });
     const store = await getStore();
     await store.getState().fetchServerProviders();
-    const cfg = store.getState().ttsProvidersConfig['openai-tts'];
+    const cfg = store.getState().ttsProvidersConfig['doubao-tts'];
     expect(cfg.isServerConfigured).toBe(true);
     expect(cfg.serverDisabled).toBe(false);
   });
 
   it('clears serverDisabled when a later sync no longer reports the provider disabled', async () => {
     const store = await getStore();
-    mockServerResponse({ tts: { 'openai-tts': { disabled: true } } });
+    mockServerResponse({ tts: { 'doubao-tts': { disabled: true } } });
     await store.getState().fetchServerProviders();
-    expect(store.getState().ttsProvidersConfig['openai-tts'].serverDisabled).toBe(true);
+    expect(store.getState().ttsProvidersConfig['doubao-tts'].serverDisabled).toBe(true);
     mockServerResponse({ tts: {} });
     await store.getState().fetchServerProviders();
-    expect(store.getState().ttsProvidersConfig['openai-tts'].serverDisabled).toBe(false);
+    expect(store.getState().ttsProvidersConfig['doubao-tts'].serverDisabled).toBe(false);
   });
 });

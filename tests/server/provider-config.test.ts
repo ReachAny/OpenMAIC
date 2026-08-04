@@ -534,22 +534,35 @@ pdf:
     });
 
     it('marks an env-configured TTS provider as managed (no disabled flag)', async () => {
-      vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
+      vi.stubEnv('TTS_AZURE_API_KEY', 'azure-key');
       const { getServerTTSProviders } = await import('@/lib/server/provider-config');
-      expect(getServerTTSProviders()['openai-tts']).toEqual({});
+      expect(getServerTTSProviders()['azure-tts']).toEqual({});
+    });
+
+    it('ignores the removed first-party OpenAI TTS env prefix', async () => {
+      vi.stubEnv('TTS_OPENAI_API_KEY', 'legacy-key');
+      const { getServerTTSProviders } = await import('@/lib/server/provider-config');
+      expect(getServerTTSProviders()).toEqual({});
+    });
+
+    it('ignores a removed first-party OpenAI TTS YAML entry', async () => {
+      yamlOverride =
+        'tts:\n  openai-tts:\n    apiKey: legacy-key\n    baseUrl: https://api.openai.com/v1\n';
+      const { getServerTTSProviders } = await import('@/lib/server/provider-config');
+      expect(getServerTTSProviders()).toEqual({});
     });
 
     it('exposes a static TTS model allowlist and preserves an allowed selection', async () => {
-      vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
-      vi.stubEnv('TTS_OPENAI_MODELS', 'voice-a,voice-b');
+      vi.stubEnv('TTS_AZURE_API_KEY', 'azure-key');
+      vi.stubEnv('TTS_AZURE_MODELS', 'voice-a,voice-b');
       const { getServerTTSProviders, resolveTTSModel } =
         await import('@/lib/server/provider-config');
 
-      expect(getServerTTSProviders()['openai-tts']).toEqual({
+      expect(getServerTTSProviders()['azure-tts']).toEqual({
         models: ['voice-a', 'voice-b'],
       });
-      expect(resolveTTSModel('openai-tts', 'voice-b')).toBe('voice-b');
-      expect(resolveTTSModel('openai-tts', 'unknown')).toBe('voice-a');
+      expect(resolveTTSModel('azure-tts', 'voice-b')).toBe('voice-b');
+      expect(resolveTTSModel('azure-tts', 'unknown')).toBe('voice-a');
     });
 
     it('identifies only the server-owned ReachAcademy Doubao proxy path', async () => {
@@ -560,7 +573,7 @@ pdf:
         await import('@/lib/server/provider-config');
 
       expect(isReachAnyManagedTTSProxy('doubao-tts')).toBe(true);
-      expect(isReachAnyManagedTTSProxy('openai-tts')).toBe(false);
+      expect(isReachAnyManagedTTSProxy('azure-tts')).toBe(false);
       expect(resolveTTSCatalogBaseUrl('doubao-tts')).toBe('http://model-service:8100/v1');
 
       vi.resetModules();
@@ -574,10 +587,10 @@ pdf:
     });
 
     it('force-disables a provider via TTS_<P>_ENABLED=false even when it has a key', async () => {
-      vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
-      vi.stubEnv('TTS_OPENAI_ENABLED', 'false');
+      vi.stubEnv('TTS_AZURE_API_KEY', 'azure-key');
+      vi.stubEnv('TTS_AZURE_ENABLED', 'false');
       const { getServerTTSProviders } = await import('@/lib/server/provider-config');
-      expect(getServerTTSProviders()['openai-tts']).toEqual({ disabled: true });
+      expect(getServerTTSProviders()['azure-tts']).toEqual({ disabled: true });
     });
 
     it('force-disables browser-native via env (it is client-only, has no key)', async () => {
@@ -593,25 +606,25 @@ pdf:
     });
 
     it('env ENABLED=true overrides a YAML disable', async () => {
-      yamlOverride = 'tts:\n  openai-tts:\n    enabled: false\n    apiKey: sk-yaml\n';
-      vi.stubEnv('TTS_OPENAI_ENABLED', 'true');
+      yamlOverride = 'tts:\n  azure-tts:\n    enabled: false\n    apiKey: azure-yaml\n';
+      vi.stubEnv('TTS_AZURE_ENABLED', 'true');
       const { getServerTTSProviders } = await import('@/lib/server/provider-config');
       // Re-enabled by env, and configured via YAML key ⇒ managed, not disabled.
-      expect(getServerTTSProviders()['openai-tts']).toEqual({});
+      expect(getServerTTSProviders()['azure-tts']).toEqual({});
     });
 
     it('an empty TTS_<P>_ENABLED does NOT override a YAML disable', async () => {
-      yamlOverride = 'tts:\n  openai-tts:\n    enabled: false\n    apiKey: sk-yaml\n';
-      vi.stubEnv('TTS_OPENAI_ENABLED', '');
+      yamlOverride = 'tts:\n  azure-tts:\n    enabled: false\n    apiKey: azure-yaml\n';
+      vi.stubEnv('TTS_AZURE_ENABLED', '');
       const { getServerTTSProviders } = await import('@/lib/server/provider-config');
-      expect(getServerTTSProviders()['openai-tts']).toEqual({ disabled: true });
+      expect(getServerTTSProviders()['azure-tts']).toEqual({ disabled: true });
     });
 
     it('isServerTTSProviderDisabled reflects the force-disable set', async () => {
-      vi.stubEnv('TTS_OPENAI_API_KEY', 'sk-tts');
-      vi.stubEnv('TTS_OPENAI_ENABLED', 'false');
+      vi.stubEnv('TTS_AZURE_API_KEY', 'azure-key');
+      vi.stubEnv('TTS_AZURE_ENABLED', 'false');
       const { isServerTTSProviderDisabled } = await import('@/lib/server/provider-config');
-      expect(isServerTTSProviderDisabled('openai-tts')).toBe(true);
+      expect(isServerTTSProviderDisabled('azure-tts')).toBe(true);
       expect(isServerTTSProviderDisabled('qwen-tts')).toBe(false);
     });
   });

@@ -36,7 +36,7 @@ describe('resolveAgentVoice with overrides', () => {
       agent('default-2', { providerId: 'qwen-tts', voiceId: 'Cherry' }),
       0,
       [qwen],
-      { 'default-2': { providerId: 'openai-tts', voiceId: 'alloy' } },
+      { 'default-2': { providerId: 'azure-tts', voiceId: 'zh-CN-XiaoxiaoNeural' } },
     );
     expect(resolved).toEqual({ providerId: 'qwen-tts', modelId: undefined, voiceId: 'Cherry' });
   });

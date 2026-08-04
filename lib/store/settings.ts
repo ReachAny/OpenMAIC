@@ -14,7 +14,14 @@ import { getThinkingConfigKey, supportsConfigurableThinking } from '@/lib/ai/thi
 import type { TTSProviderId, ASRProviderId, BuiltInTTSProviderId } from '@/lib/audio/types';
 import type { AgentVoiceOverride } from '@/lib/audio/voice-resolver';
 import { isCustomTTSProvider, isCustomASRProvider } from '@/lib/audio/types';
-import { ASR_PROVIDERS, DEFAULT_TTS_VOICES, TTS_PROVIDERS } from '@/lib/audio/constants';
+import {
+  ASR_PROVIDERS,
+  DEFAULT_TTS_PROVIDER_ID,
+  DEFAULT_TTS_VOICE_ID,
+  DEFAULT_TTS_VOICES,
+  TTS_PROVIDERS,
+} from '@/lib/audio/constants';
+import { isTTSProviderEnabled } from '@/lib/audio/provider-enablement';
 import { DEFAULT_VOXCPM_BACKEND, VOXCPM_MODEL_ID, VOXCPM_VLLM_MODEL_ID } from '@/lib/audio/voxcpm';
 import { PDF_PROVIDERS } from '@/lib/pdf/constants';
 import type { PDFProviderId } from '@/lib/pdf/types';
@@ -31,6 +38,7 @@ import {
 } from '@/lib/store/settings-validation';
 
 const log = createLogger('Settings');
+const LEGACY_OPENAI_TTS_PROVIDER_ID = 'openai-tts';
 
 function pruneThinkingConfigs(
   thinkingConfigs: Record<string, ThinkingConfig> | undefined,
@@ -460,8 +468,8 @@ function isUsableMediaProvider(
 
 // Initialize default audio config
 const getDefaultAudioConfig = () => ({
-  ttsProviderId: 'browser-native-tts' as TTSProviderId,
-  ttsVoice: 'default',
+  ttsProviderId: DEFAULT_TTS_PROVIDER_ID,
+  ttsVoice: DEFAULT_TTS_VOICE_ID,
   ttsSpeed: 1.0,
   asrProviderId: 'browser-native' as ASRProviderId,
   asrLanguage: 'zh',
@@ -470,7 +478,6 @@ const getDefaultAudioConfig = () => ({
     // configured (API key or server-managed), so "enabled" is a user opt-OUT,
     // not the visibility gate. A server-configured provider must not be hidden
     // by a stale default (#665).
-    'openai-tts': { apiKey: '', baseUrl: '', enabled: true },
     'azure-tts': { apiKey: '', baseUrl: '', enabled: true },
     'glm-tts': { apiKey: '', baseUrl: '', enabled: true },
     'qwen-tts': { apiKey: '', baseUrl: '', enabled: true },
@@ -505,6 +512,51 @@ const getDefaultAudioConfig = () => ({
     'lemonade-asr': { apiKey: '', baseUrl: '', enabled: false },
   } as Record<ASRProviderId, { apiKey: string; baseUrl: string; enabled: boolean }>,
 });
+
+function migrateLegacyOpenAITTSSettings(state: Partial<SettingsState>): void {
+  if (state.ttsModel === LEGACY_OPENAI_TTS_PROVIDER_ID) {
+    state.ttsModel = DEFAULT_TTS_PROVIDER_ID;
+  }
+
+  if ((state.ttsProviderId as string | undefined) === LEGACY_OPENAI_TTS_PROVIDER_ID) {
+    state.ttsProviderId = DEFAULT_TTS_PROVIDER_ID;
+    state.ttsVoice = DEFAULT_TTS_VOICE_ID;
+  }
+
+  const configs = state.ttsProvidersConfig as
+    | Record<string, SettingsState['ttsProvidersConfig'][TTSProviderId]>
+    | undefined;
+  if (configs) delete configs[LEGACY_OPENAI_TTS_PROVIDER_ID];
+
+  if (state.agentVoiceOverrides) {
+    state.agentVoiceOverrides = Object.fromEntries(
+      Object.entries(state.agentVoiceOverrides).map(([agentId, override]) => [
+        agentId,
+        (override.providerId as string) === LEGACY_OPENAI_TTS_PROVIDER_ID
+          ? { providerId: DEFAULT_TTS_PROVIDER_ID, voiceId: DEFAULT_TTS_VOICE_ID }
+          : override,
+      ]),
+    );
+  }
+}
+
+function resolveDisabledTTSProviderFallback(
+  config: SettingsState['ttsProvidersConfig'],
+  disabledProviderId: TTSProviderId,
+): TTSProviderId {
+  if (
+    disabledProviderId !== DEFAULT_TTS_PROVIDER_ID &&
+    isTTSProviderEnabled(DEFAULT_TTS_PROVIDER_ID, config[DEFAULT_TTS_PROVIDER_ID])
+  ) {
+    return DEFAULT_TTS_PROVIDER_ID;
+  }
+
+  const enabledProvider = (Object.keys(TTS_PROVIDERS) as BuiltInTTSProviderId[]).find(
+    (providerId) =>
+      providerId !== disabledProviderId && isTTSProviderEnabled(providerId, config[providerId]),
+  );
+  return enabledProvider ?? 'browser-native-tts';
+}
 
 // Initialize default PDF config
 const getDefaultPDFConfig = () => ({
@@ -886,7 +938,7 @@ const migrateFromOldStorage = () => {
   }
 
   // Parse other settings
-  let ttsModel = 'openai-tts';
+  let ttsModel: string = DEFAULT_TTS_PROVIDER_ID;
   if (oldTtsModel) ttsModel = oldTtsModel;
 
   let selectedAgentIds = ['default-1', 'default-2', 'default-3'];
@@ -933,7 +985,7 @@ export const useSettingsStore = create<SettingsState>()(
           initialProvidersConfig,
         ),
         providersConfig: initialProvidersConfig,
-        ttsModel: migratedData?.ttsModel || 'openai-tts',
+        ttsModel: migratedData?.ttsModel || DEFAULT_TTS_PROVIDER_ID,
         selectedAgentIds: migratedData?.selectedAgentIds || ['default-1', 'default-2', 'default-3'],
         agentMode: 'auto' as const,
         autoAgentCount: 3,
@@ -1129,10 +1181,14 @@ export const useSettingsStore = create<SettingsState>()(
             // the selection back to the always-available browser TTS so playback
             // doesn't keep pointing at a disabled provider with an empty key.
             if (state.ttsProviderId === providerId && config.enabled === false) {
+              const fallbackProvider = resolveDisabledTTSProviderFallback(
+                ttsProvidersConfig,
+                providerId,
+              );
               return {
                 ttsProvidersConfig,
-                ttsProviderId: getDefaultAudioConfig().ttsProviderId,
-                ttsVoice: 'default',
+                ttsProviderId: fallbackProvider,
+                ttsVoice: DEFAULT_TTS_VOICES[fallbackProvider as BuiltInTTSProviderId] || 'default',
               };
             }
             return { ttsProvidersConfig };
@@ -1676,7 +1732,7 @@ export const useSettingsStore = create<SettingsState>()(
                 state.ttsProviderId,
                 newTTSConfig,
                 ttsFallback,
-                'browser-native-tts' as TTSProviderId,
+                DEFAULT_TTS_PROVIDER_ID,
               );
               const validASRProvider = validateProvider(
                 state.asrProviderId,
@@ -1786,7 +1842,7 @@ export const useSettingsStore = create<SettingsState>()(
                 // TTS: select first server provider if current is not server-configured.
                 // Skip server-disabled entries — they are force-off, not selectable.
                 const serverTtsIds = Object.entries(data.tts)
-                  .filter(([, info]) => !info.disabled)
+                  .filter(([id, info]) => !!newTTSConfig[id as TTSProviderId] && !info.disabled)
                   .map(([id]) => id) as TTSProviderId[];
                 if (
                   serverTtsIds.length > 0 &&
@@ -1934,7 +1990,7 @@ export const useSettingsStore = create<SettingsState>()(
     },
     {
       name: 'settings-storage',
-      version: 4,
+      version: 5,
       // Migrate persisted state
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Partial<SettingsState>;
@@ -1958,13 +2014,14 @@ export const useSettingsStore = create<SettingsState>()(
         // Migrate from old ttsModel to new ttsProviderId
         if (state.ttsModel && !state.ttsProviderId) {
           // Map old ttsModel values to new ttsProviderId
-          if (state.ttsModel === 'openai-tts') {
-            state.ttsProviderId = 'openai-tts';
+          if (state.ttsModel === LEGACY_OPENAI_TTS_PROVIDER_ID) {
+            state.ttsProviderId = DEFAULT_TTS_PROVIDER_ID;
+            state.ttsVoice = DEFAULT_TTS_VOICE_ID;
           } else if (state.ttsModel === 'azure-tts') {
             state.ttsProviderId = 'azure-tts';
           } else {
-            // Default to OpenAI
-            state.ttsProviderId = 'openai-tts';
+            state.ttsProviderId = DEFAULT_TTS_PROVIDER_ID;
+            state.ttsVoice = DEFAULT_TTS_VOICE_ID;
           }
         }
 
@@ -2136,6 +2193,10 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
+        // v4 → v5: first-party OpenAI TTS was removed. Replace every persisted
+        // global/agent selection atomically with ReachAny's Doubao/Vivi default.
+        migrateLegacyOpenAITTSSettings(state);
+
         ensureValidProviderSelections(state);
         ensureBuiltInAudioProviders(state);
         ensureBuiltInWebSearchProviders(state);
@@ -2152,6 +2213,7 @@ export const useSettingsStore = create<SettingsState>()(
         const persisted = { ...(persistedState as object) } as Record<string, unknown>;
         delete persisted.editInsertToolbarCollapsed;
         const merged = { ...currentState, ...persisted };
+        migrateLegacyOpenAITTSSettings(merged as Partial<SettingsState>);
         ensureBuiltInProviders(merged as Partial<SettingsState>);
         promoteLegacyCustomProviderBaseUrls(merged as Partial<SettingsState>);
         ensureBuiltInAudioProviders(merged as Partial<SettingsState>);

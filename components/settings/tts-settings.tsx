@@ -205,7 +205,6 @@ export function TTSSettings({ selectedProviderId }: TTSSettingsProps) {
   const endpointPath = (() => {
     if (isCustom) return '/audio/speech';
     switch (selectedProviderId) {
-      case 'openai-tts':
       case 'glm-tts':
       case 'lemonade-tts':
         return '/audio/speech';

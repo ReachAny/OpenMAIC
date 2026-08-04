@@ -10,8 +10,8 @@ describe('voice-registration provider dispatch', () => {
   });
 
   it('returns undefined for providers without an adapter', () => {
-    expect(getVoiceRegistrationAdapter('openai-tts')).toBeUndefined();
-    expect(supportsVoiceRegistration('openai-tts')).toBe(false);
+    expect(getVoiceRegistrationAdapter('doubao-tts')).toBeUndefined();
+    expect(supportsVoiceRegistration('doubao-tts')).toBe(false);
   });
 
   it('honors per-provider capability (voxcpm only with the vllm-omni backend)', () => {

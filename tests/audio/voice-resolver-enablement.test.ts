@@ -20,14 +20,14 @@ const agent = (voiceConfig?: AgentConfig['voiceConfig']) => ({ voiceConfig }) as
 describe('getEnabledProvidersWithVoices', () => {
   it('includes configured+enabled providers, excludes disabled/unconfigured/browser-native', () => {
     const providers = getEnabledProvidersWithVoices({
-      'openai-tts': { apiKey: 'k', enabled: true },
+      'doubao-tts': { apiKey: 'k', enabled: true },
       'qwen-tts': { apiKey: 'k', enabled: false }, // user-disabled
       'glm-tts': { apiKey: 'k', serverDisabled: true }, // server-disabled
       'lemonade-tts': {}, // not configured (defaultBaseUrl dropped)
       'browser-native-tts': { enabled: true }, // never in this list
     });
     const ids = providers.map((p) => p.providerId);
-    expect(ids).toContain('openai-tts');
+    expect(ids).toContain('doubao-tts');
     expect(ids).not.toContain('qwen-tts');
     expect(ids).not.toContain('glm-tts');
     expect(ids).not.toContain('lemonade-tts');
@@ -36,7 +36,7 @@ describe('getEnabledProvidersWithVoices', () => {
 
   it('replaces built-in TTS model groups with managed aliases', () => {
     const providers = getEnabledProvidersWithVoices({
-      'openai-tts': {
+      'doubao-tts': {
         enabled: true,
         isServerConfigured: true,
         serverModels: ['course-voice-a', 'course-voice-b'],
@@ -52,12 +52,12 @@ describe('getEnabledProvidersWithVoices', () => {
 });
 
 describe('resolveAgentVoice', () => {
-  const openai: ProviderWithVoices = {
-    providerId: 'openai-tts',
-    providerName: 'OpenAI TTS',
+  const doubao: ProviderWithVoices = {
+    providerId: 'doubao-tts',
+    providerName: 'Doubao TTS',
     voices: [
-      { id: 'alloy', name: 'Alloy' },
-      { id: 'echo', name: 'Echo' },
+      { id: 'zh_female_vv_uranus_bigtts', name: 'Vivi 2.0' },
+      { id: 'zh_female_xiaohe_uranus_bigtts', name: 'Xiaohe 2.0' },
     ],
     modelGroups: [],
   };
@@ -67,24 +67,27 @@ describe('resolveAgentVoice', () => {
   });
 
   it('deterministically picks among enabled providers by agent index', () => {
-    expect(resolveAgentVoice(agent(), 0, [openai])).toEqual({
-      providerId: 'openai-tts',
-      voiceId: 'alloy',
+    expect(resolveAgentVoice(agent(), 0, [doubao])).toEqual({
+      providerId: 'doubao-tts',
+      voiceId: 'zh_female_vv_uranus_bigtts',
     });
-    expect(resolveAgentVoice(agent(), 1, [openai])).toEqual({
-      providerId: 'openai-tts',
-      voiceId: 'echo',
+    expect(resolveAgentVoice(agent(), 1, [doubao])).toEqual({
+      providerId: 'doubao-tts',
+      voiceId: 'zh_female_xiaohe_uranus_bigtts',
     });
     // index wraps deterministically
-    expect(resolveAgentVoice(agent(), 2, [openai])?.voiceId).toBe('alloy');
+    expect(resolveAgentVoice(agent(), 2, [doubao])?.voiceId).toBe('zh_female_vv_uranus_bigtts');
   });
 
   it('honors a voiceConfig only when its provider is still enabled', () => {
-    const cfg = { providerId: 'openai-tts' as const, voiceId: 'echo' };
-    expect(resolveAgentVoice(agent(cfg), 0, [openai])).toEqual({
-      providerId: 'openai-tts',
+    const cfg = {
+      providerId: 'doubao-tts' as const,
+      voiceId: 'zh_female_xiaohe_uranus_bigtts',
+    };
+    expect(resolveAgentVoice(agent(cfg), 0, [doubao])).toEqual({
+      providerId: 'doubao-tts',
       modelId: undefined,
-      voiceId: 'echo',
+      voiceId: 'zh_female_xiaohe_uranus_bigtts',
     });
     // provider not in enabled list ⇒ fall back to deterministic pick (not the
     // stale voiceConfig)
@@ -94,9 +97,9 @@ describe('resolveAgentVoice', () => {
   it('never auto-assigns browser-native, but honors it as an explicit choice', () => {
     const bn = { providerId: 'browser-native-tts' as const, voiceId: 'default' };
     // browser-native not in the enabled list ⇒ explicit config ignored, no fallback
-    expect(resolveAgentVoice(agent(bn), 0, [openai])).toEqual({
-      providerId: 'openai-tts',
-      voiceId: 'alloy',
+    expect(resolveAgentVoice(agent(bn), 0, [doubao])).toEqual({
+      providerId: 'doubao-tts',
+      voiceId: 'zh_female_vv_uranus_bigtts',
     });
     // browser-native present (user enabled it) ⇒ explicit choice honored
     const withBn: ProviderWithVoices = {
@@ -105,10 +108,22 @@ describe('resolveAgentVoice', () => {
       voices: [{ id: 'default', name: 'Default' }],
       modelGroups: [],
     };
-    expect(resolveAgentVoice(agent(bn), 0, [openai, withBn])).toEqual({
+    expect(resolveAgentVoice(agent(bn), 0, [doubao, withBn])).toEqual({
       providerId: 'browser-native-tts',
       modelId: undefined,
       voiceId: 'default',
+    });
+  });
+
+  it('maps a persisted OpenAI voiceConfig to Doubao/Vivi when Doubao is enabled', () => {
+    const legacyAgent = {
+      voiceConfig: { providerId: 'openai-tts', voiceId: 'alloy' },
+    } as unknown as AgentConfig;
+
+    expect(resolveAgentVoice(legacyAgent, 0, [doubao])).toEqual({
+      providerId: 'doubao-tts',
+      modelId: undefined,
+      voiceId: 'zh_female_vv_uranus_bigtts',
     });
   });
 });

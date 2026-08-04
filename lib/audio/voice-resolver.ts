@@ -1,7 +1,11 @@
 import type { TTSProviderId } from '@/lib/audio/types';
 import { isCustomTTSProvider } from '@/lib/audio/types';
 import type { AgentConfig } from '@/lib/orchestration/registry/types';
-import { TTS_PROVIDERS } from '@/lib/audio/constants';
+import {
+  DEFAULT_TTS_PROVIDER_ID,
+  DEFAULT_TTS_VOICE_ID,
+  TTS_PROVIDERS,
+} from '@/lib/audio/constants';
 import {
   BROWSER_NATIVE_TTS_PROVIDER_ID,
   isTTSProviderEnabled,
@@ -30,6 +34,24 @@ export interface AgentVoiceOverride {
 /** Persisted per-agent voice picks, keyed by agent id (settings store). */
 export type AgentVoiceOverrides = Record<string, AgentVoiceOverride>;
 
+const LEGACY_OPENAI_TTS_PROVIDER_ID = 'openai-tts';
+
+type PersistedVoiceChoice = {
+  providerId: string;
+  modelId?: string;
+  voiceId: string;
+};
+
+function normalizePersistedVoiceChoice(
+  choice: PersistedVoiceChoice | undefined,
+): AgentVoiceOverride | undefined {
+  if (!choice) return undefined;
+  if (choice.providerId === LEGACY_OPENAI_TTS_PROVIDER_ID) {
+    return { providerId: DEFAULT_TTS_PROVIDER_ID, voiceId: DEFAULT_TTS_VOICE_ID };
+  }
+  return choice as AgentVoiceOverride;
+}
+
 /**
  * Resolve the TTS provider + voice for an agent, choosing only among ENABLED
  * providers (`enabledProviders` is the output of getEnabledProvidersWithVoices,
@@ -56,8 +78,12 @@ export function resolveAgentVoice(
   // (settings store — survives reloads; registry records for default/generated
   // agents do not), then the agent's own voiceConfig. Each is honored only
   // when its provider is still enabled and the voice is known.
-  const candidates = [overrides?.[agent.id], agent.voiceConfig];
-  for (const choice of candidates) {
+  const candidates: Array<PersistedVoiceChoice | undefined> = [
+    overrides?.[agent.id],
+    agent.voiceConfig,
+  ];
+  for (const rawChoice of candidates) {
+    const choice = normalizePersistedVoiceChoice(rawChoice);
     if (!choice) continue;
     // Browser-native voices are dynamic (not in static registry); it is a
     // first-class provider only when present in the enabled list.
