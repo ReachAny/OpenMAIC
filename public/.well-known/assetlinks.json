@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.reachany.academy.twa",
+      "sha256_cert_fingerprints": [
+        "C6:17:1E:CE:C6:1C:73:A7:39:BD:3C:6F:C5:35:75:42:12:7C:F3:6B:C9:19:67:B6:7D:F0:35:59:95:1E:FF:07"
+      ]
+    }
+  }
+]
