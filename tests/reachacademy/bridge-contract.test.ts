@@ -106,4 +106,30 @@ describe('ReachAcademy OpenMAIC bridge contract', () => {
     });
     expect(requestOrigin(spoofed)).toBe('http://localhost:3002');
   });
+
+  test('accepts the test and production OpenMAIC origins', () => {
+    for (const hostname of ['openmaic.test.reachacademy.cn', 'openmaic.reachacademy.cn']) {
+      const request = new Request('http://localhost:3002/api/openmaic/exchange', {
+        headers: {
+          host: `${hostname}`,
+          'x-forwarded-host': hostname,
+          'x-forwarded-proto': 'https',
+        },
+      });
+
+      expect(requestOrigin(request)).toBe(`https://${hostname}`);
+    }
+
+    for (const hostname of ['openmaic.test.reachany.cn', 'openmaic.reachany.cn']) {
+      const request = new Request('http://localhost:3002/api/openmaic/exchange', {
+        headers: {
+          host: hostname,
+          'x-forwarded-host': hostname,
+          'x-forwarded-proto': 'https',
+        },
+      });
+
+      expect(requestOrigin(request)).toBe('http://localhost:3002');
+    }
+  });
 });

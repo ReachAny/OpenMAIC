@@ -2,8 +2,8 @@ import { getDomain } from 'tldts';
 
 const ALLOWED_OPENMAIC_HOSTS = new Set([
   '127.0.0.1',
-  'openmaic.test.reachany.cn',
-  'openmaic.reachany.cn',
+  'openmaic.test.reachacademy.cn',
+  'openmaic.reachacademy.cn',
 ]);
 
 /**
