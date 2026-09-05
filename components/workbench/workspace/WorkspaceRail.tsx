@@ -93,6 +93,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useI18n } from '@/lib/hooks/use-i18n';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
 import { useBrand } from '@/lib/brand/brand-context';
 import type { HomeDiscoveryState, useHomeDiscovery } from '@/lib/hooks/use-home-discovery';
 import { ProBadge } from '@/components/workbench/ProBadge';
@@ -232,6 +233,7 @@ export function WorkspaceRail({
 }) {
   const { t } = useI18n();
   const brand = useBrand();
+  const hostReturnUrl = useOpenMaicHostReturnUrl();
   const foldersAvailable = workspaceFoldersAvailable();
 
   const coursesSection = useListSearch();
@@ -844,7 +846,13 @@ export function WorkspaceRail({
         {/* The wordmark is the way home; the PRO pill beside it is the switch
             that leaves Pro. Two different destinations, so two hit targets —
             never one control wearing both meanings. */}
-        <HomeLink testId="pro-nav-home" onGoHome={onGoHome} className="-ml-1.5 px-1.5 py-1">
+        <HomeLink
+          testId="pro-nav-home"
+          onGoHome={hostReturnUrl ? () => globalThis.location.assign(hostReturnUrl) : onGoHome}
+          href={hostReturnUrl ?? '/workspace'}
+          label={hostReturnUrl ? t('workbench.launch.openMaicBack') : t('workspace.homeAria')}
+          className="-ml-1.5 px-1.5 py-1"
+        >
           <img
             src={brand.logoSrc}
             alt=""
@@ -1426,7 +1434,6 @@ function TreeGroundDrop({
   readonly active: boolean;
   readonly dropProps: Record<string, unknown>;
 }) {
-  const { t } = useI18n();
   return (
     <div
       data-testid="pro-nav-tree-ground-drop"
@@ -2223,21 +2230,25 @@ export function RailOverflow({
 function HomeLink({
   testId,
   onGoHome,
+  href,
+  label,
   className,
   children,
 }: {
   readonly testId: string;
   readonly onGoHome: () => void;
+  readonly href: string;
+  readonly label: string;
   readonly className?: string;
   readonly children: ReactNode;
 }) {
   const { t } = useI18n();
   return (
     <a
-      href="/workspace"
+      href={href}
       data-testid={testId}
-      aria-label={t('workspace.homeAria')}
-      title={t('workspace.homeAria')}
+      aria-label={label}
+      title={label}
       onClick={(event: ReactMouseEvent<HTMLAnchorElement>) => {
         if (event.button !== 0) return;
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
