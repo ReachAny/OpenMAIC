@@ -2074,7 +2074,6 @@ function SessionDot({ status }: { readonly status: ProHomeSessionItem['status'] 
  * notifications.
  */
 function RailUtilities({ onOpenSettings }: { readonly onOpenSettings: () => void }) {
-  const { t } = useI18n();
   return (
     <div className="shrink-0" data-testid="pro-rail-utilities">
       <div className="ws-seam-rail mx-4" aria-hidden="true" />
