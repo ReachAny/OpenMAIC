@@ -144,6 +144,20 @@ describe('lifecycle events', () => {
     expect(end.detail).toBeUndefined();
   });
 
+  it('preserves structured failure causes instead of rendering object text', () => {
+    const state = foldAll([
+      ev('session_end', {
+        status: 'failed',
+        error: { code: 'MODEL_UNAVAILABLE', message: 'No managed model is configured' },
+      }),
+    ]);
+    const end = state.chat[state.chat.length - 1];
+    expect(end.detail).toBe(
+      '{"code":"MODEL_UNAVAILABLE","message":"No managed model is configured"}',
+    );
+    expect(end.detail).not.toContain('[object Object]');
+  });
+
   it('session_end succeeded leaves no divider; the next user bubble is the break', () => {
     const state = foldAll([ev('session_end', { status: 'succeeded' })]);
     expect(state.status).toBe('succeeded');

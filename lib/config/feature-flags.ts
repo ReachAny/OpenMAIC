@@ -11,41 +11,24 @@ function readBoolean(envValue: string | undefined): boolean {
   return envValue === 'true' || envValue === '1';
 }
 
-/**
- * Server-only gate for durable background agent execution. This is evaluated
- * at process runtime and is never exposed to the browser bundle.
- */
+/** Server-only database readiness gate retained for existing runtime call sites. */
 export function isAgentRuntimeEnabled(): boolean {
-  return readBoolean(process.env.OPENMAIC_AGENT_RUNTIME_ENABLED);
+  return Boolean(process.env.DATABASE_URL?.trim());
 }
 
 /** The Node runtime can start the runner only with a non-empty database URL. */
 export function isAgentRuntimeConfigured(): boolean {
-  return isAgentRuntimeEnabled() && Boolean(process.env.DATABASE_URL?.trim());
+  return Boolean(process.env.DATABASE_URL?.trim());
 }
 
-/**
- * Build-time workbench affordance. This public flag is separate from the
- * server runtime gate because Next.js inlines NEXT_PUBLIC values into client
- * bundles; both gates must be on before a workbench page is reachable.
- */
+/** Retired build-time gate; ReachAcademy workbench access comes from bridge capabilities. */
 export function isProWorkbenchEnabled(): boolean {
-  return readBoolean(process.env.NEXT_PUBLIC_PRO_WORKBENCH_ENABLED);
+  return false;
 }
 
-/**
- * MAIC Editor (Pro mode) gate. Default OFF — gates only the Pro toggle
- * affordance in `Header`. The `StageMode` type union is unaffected so
- * existing code paths typecheck identically with the flag in either
- * state.
- *
- * Implied by the Pro workbench flag: the workbench IS Pro mode, and a
- * workbench build without the editor toggle has no way to edit a course.
- * The standalone flag remains for deployments that want the classroom
- * editor without the workbench.
- */
+/** Retired build-time gate; editor chrome comes from the stage bridge grant. */
 export function isMaicEditorEnabled(): boolean {
-  return isProWorkbenchEnabled() || readBoolean(process.env.NEXT_PUBLIC_MAIC_EDITOR_ENABLED);
+  return false;
 }
 
 /**

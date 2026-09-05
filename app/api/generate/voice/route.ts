@@ -16,6 +16,8 @@
 
 import { NextRequest } from 'next/server';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerTTSProviderDisabled,
   resolveTTSApiKey,
@@ -33,6 +35,7 @@ import {
 } from '@/lib/audio/voice-registration';
 import { QwenVoiceCloneError, qwenVoiceCloneErrorMessage } from '@/lib/audio/qwen-voice-clone';
 import { InvalidReferenceAudioError } from '@/lib/audio/wav-validate';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('Voice Registration API');
 
@@ -62,6 +65,8 @@ function childSignal(
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let providerId: string | undefined;
   let voiceId: string | undefined;
   const deadline = new AbortController();
@@ -93,6 +98,7 @@ export async function POST(req: NextRequest) {
     if (!providerId) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'providerId is required');
     }
+    assertReachAnyProviderAllowed('tts', providerId);
     if (!voiceId) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'voiceId is required');
     }
@@ -143,6 +149,7 @@ export async function POST(req: NextRequest) {
           ? resolveQwenVoiceCloneModel()
           : resolveTTSModel(providerId, body.ttsModelId),
     };
+    await assertReachAnyManagedModelAllowed('audio_speech', 'tts', providerId, cfg.model);
 
     if (deleting) {
       if (!adapter.deleteVoice) {
@@ -239,6 +246,9 @@ export async function POST(req: NextRequest) {
     }
     if (error instanceof InvalidReferenceAudioError) {
       return apiError(error.code, 400, error.message);
+    }
+    if (error instanceof Error && error.message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
     }
     if (deadline.signal.aborted) {
       return apiError('QWEN_VC_TIMEOUT', 504, 'The voice registration request timed out.');

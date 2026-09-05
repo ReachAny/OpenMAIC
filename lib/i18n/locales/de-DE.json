@@ -992,6 +992,8 @@
     "deleteFolderConfirmRemove": "Dadurch werden der Ordner und seine Kurse einschließlich des Chatverlaufs gelöscht.",
     "notFound": "Kurs nicht gefunden",
     "notFoundDesc": "Dieser Kurs existiert nicht oder wurde gelöscht.",
+    "authorizationRequired": "OpenMAIC-Kurs kann nicht geöffnet werden",
+    "authorizationRequiredDesc": "Deine Anmeldung oder Kursberechtigung ist abgelaufen. Öffne den Kurs erneut über Teacher.",
     "backToHome": "Zurück zur Startseite"
   },
   "upload": {

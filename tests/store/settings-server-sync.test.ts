@@ -565,6 +565,77 @@ describe('fetchServerProviders — provider availability sync', () => {
     expect(isUsable).toBe(false);
   });
 
+  it('clears stale server flags when the catalog request is unauthorized', async () => {
+    const store = await getStore();
+
+    // Simulate a previously successful sync persisted in the browser.
+    store.setState({
+      managedOnly: true,
+      serverCatalogLoaded: true,
+      providersConfig: {
+        ...store.getState().providersConfig,
+        openai: {
+          ...store.getState().providersConfig.openai,
+          isServerConfigured: true,
+          serverModels: ['gpt-4o'],
+        },
+      },
+    });
+
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403 });
+    await store.getState().fetchServerProviders();
+
+    const config = store.getState().providersConfig.openai;
+    expect(store.getState().serverCatalogLoaded).toBe(false);
+    expect(config.isServerConfigured).toBe(false);
+    expect(config.serverModels).toBeUndefined();
+  });
+
+  it('hides a previously loaded catalog while the next request is pending', async () => {
+    const store = await getStore();
+    store.setState({
+      managedOnly: true,
+      serverCatalogLoaded: true,
+      providersConfig: {
+        ...store.getState().providersConfig,
+        openai: {
+          ...store.getState().providersConfig.openai,
+          isServerConfigured: true,
+          serverModels: ['gpt-4o'],
+        },
+      },
+    });
+
+    let resolveRequest: ((value: { ok: boolean; json: () => Promise<unknown> }) => void) | null =
+      null;
+    mockFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+    const pending = store.getState().fetchServerProviders();
+
+    expect(store.getState().serverCatalogLoaded).toBe(false);
+    expect(store.getState().providersConfig.openai.isServerConfigured).toBe(false);
+
+    resolveRequest!({
+      ok: true,
+      json: async () => ({
+        providers: { openai: { models: ['gpt-4o'] } },
+        tts: {},
+        asr: {},
+        pdf: {},
+        image: {},
+        video: {},
+        webSearch: {},
+      }),
+    });
+    await pending;
+    expect(store.getState().serverCatalogLoaded).toBe(true);
+    expect(store.getState().providersConfig.openai.isServerConfigured).toBe(true);
+  });
+
   // ---- Multiple providers ----
 
   it('handles mixed provider state: one configured, one not', async () => {
@@ -697,7 +768,7 @@ describe('fetchServerProviders — provider availability sync', () => {
 
   // ---- Error handling ----
 
-  it('does not modify state when fetch returns non-ok response', async () => {
+  it('clears stale server state when fetch returns non-ok response', async () => {
     const store = await getStore();
 
     // First, set up a known state
@@ -709,8 +780,11 @@ describe('fetchServerProviders — provider availability sync', () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     await store.getState().fetchServerProviders();
 
-    // State should be unchanged — the failed fetch should not wipe existing config
-    expect(store.getState().providersConfig.openai.isServerConfigured).toBe(true);
+    // A failed authoritative request must fail closed rather than expose the
+    // previously persisted server catalog in the settings UI.
+    expect(store.getState().providersConfig.openai.isServerConfigured).toBe(false);
+    expect(store.getState().providersConfig.openai.serverModels).toBeUndefined();
+    expect(store.getState().serverCatalogLoaded).toBe(false);
   });
 
   it('does not throw when fetch rejects (network error)', async () => {
@@ -720,6 +794,8 @@ describe('fetchServerProviders — provider availability sync', () => {
 
     // Should not throw — server providers are optional
     await expect(store.getState().fetchServerProviders()).resolves.not.toThrow();
+    expect(store.getState().serverCatalogLoaded).toBe(false);
+    expect(store.getState().serverCatalogError).toBe(true);
   });
 });
 

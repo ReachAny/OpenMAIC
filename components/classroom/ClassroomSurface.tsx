@@ -102,6 +102,7 @@ export function ClassroomSurface({
       const loadToken = claimStageSceneLoadToken();
       const isCurrent = () => isEffectCurrent() && isCurrentStageSceneLoadToken(loadToken);
       let outcome: ClassroomLoadOutcome = 'loaded';
+      let loadError: string | null = null;
 
       try {
         await runClassroomLoad({
@@ -126,11 +127,19 @@ export function ClassroomSurface({
           getSettings: () => useSettingsStore.getState(),
           getAgent: (id) => useAgentRegistry.getState().getAgent(id),
           restoreAgentSelection: defaultClassroomLoadDeps.restoreAgentSelection,
-          setError,
+          setError: (message) => {
+            loadError = message;
+            setError(message);
+          },
           setLoading,
           log,
         });
         if (!isCurrent()) return 'cancelled';
+        // runClassroomLoad intentionally owns the common cleanup and catches
+        // failures. Preserve its error outcome here so an authorization
+        // failure cannot fall through to the no-stage branch and render the
+        // misleading terminal "course not found" state.
+        if (loadError !== null) return 'failed';
         // The load completed without landing this course in the store. The
         // reference learns the same fact from a server 404; here the absence
         // of a stage after every source answered is the equivalent signal. A
@@ -359,11 +368,17 @@ export function ClassroomSurface({
             </div>
           ) : error ? (
             <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-              <div className="text-center">
-                <p className="text-destructive mb-4">
-                  {t('common.errorPrefix')}
-                  {error}
+              <div className="max-w-md px-6 text-center" role="alert">
+                <p className="text-destructive mb-2">
+                  {error === 'OPENMAIC_AUTH_REQUIRED'
+                    ? t('classroom.authorizationRequired')
+                    : `${t('common.errorPrefix')}${error}`}
                 </p>
+                {error === 'OPENMAIC_AUTH_REQUIRED' && (
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {t('classroom.authorizationRequiredDesc')}
+                  </p>
+                )}
                 <button
                   onClick={() => {
                     setError(null);
@@ -379,6 +394,12 @@ export function ClassroomSurface({
                 >
                   {t('common.retry')}
                 </button>
+                <Link
+                  href="/"
+                  className="ml-2 inline-flex px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  {t('classroom.backToHome')}
+                </Link>
               </div>
             </div>
           ) : (

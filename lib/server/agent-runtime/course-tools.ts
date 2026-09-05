@@ -89,6 +89,8 @@ export interface CourseToolDeps {
   onCheckpoint: (info: CheckpointInfo) => void;
   /** The session id, recorded on the document as the producer reference. */
   sessionId?: string;
+  /** Grant-derived course asset principal; never model-visible. */
+  assetPrincipal?: string;
   /** Cancel generation, preview, and synthesis when the run stops. */
   abortSignal?: AbortSignal;
   /** Test seam for the neutral TTS path. */
@@ -213,7 +215,14 @@ export function buildDslCourseToolset(
     buildGenerateImageTool(deps),
     ...(hasConfiguredVideoGeneration(deps) ? [buildGenerateVideoTool(deps)] : []),
     ...buildCourseAudioAndDeckTools(deps),
-    ...(deps.sessionId ? [buildMaterialMediaTool({ sessionId: deps.sessionId })] : []),
+    ...(deps.sessionId
+      ? [
+          buildMaterialMediaTool({
+            sessionId: deps.sessionId,
+            coursePrincipal: deps.assetPrincipal,
+          }),
+        ]
+      : []),
     ...buildDslCourseTools(deps),
   ] as unknown as AgentTool<never, never>[];
   return markDocumentWritersSequential(withOwnerStageAuthorization(tools, deps));

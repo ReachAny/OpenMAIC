@@ -62,3 +62,13 @@ export function workspaceResumeHref(sessionId: string | null): string {
   const normalized = normalizeSessionId(sessionId);
   return normalized ? `/workspace?session=${encodeURIComponent(normalized)}` : '/workspace';
 }
+
+/**
+ * A ReachAcademy launch is bound to one authorized draft stage. Do not reuse
+ * the browser's last unrelated agent session here: a course pane is required
+ * before the first prompt can create its durable workbench session.
+ */
+export function workspaceCourseHref(stageId: string | null | undefined): string {
+  const normalized = normalizeSessionId(stageId);
+  return normalized ? `/workspace?course=${encodeURIComponent(normalized)}` : '/workspace';
+}

@@ -21,6 +21,7 @@ import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import { createLogger } from '@/lib/logger';
 import { runPolledTask } from '@/lib/media/polled-task';
+import { useStageStore } from '@/lib/store/stage';
 import {
   NoScenesError,
   sanitizeFilename,
@@ -126,6 +127,12 @@ export const useVideoRenderStore = create<VideoRenderState>()((set, get) => ({
 
     set({ status: 'compiling', percent: 0, etaMs: null, filename: null, error: null });
     const toastId = toast.loading(t('export.videoCompiling'));
+    const stageId = useStageStore.getState().stage?.id;
+    if (!stageId) {
+      toast.error(t('export.videoFailed'), { id: toastId });
+      set({ status: 'failed', error: 'stage' });
+      return;
+    }
 
     let zipBlob: Blob;
     let stageName: string;
@@ -179,7 +186,11 @@ export const useVideoRenderStore = create<VideoRenderState>()((set, get) => ({
         intervalMs: POLL_INTERVAL_MS,
         maxAttempts: MAX_POLL_ATTEMPTS,
         submit: async () => {
-          const res = await fetch('/api/export-video/render', { method: 'POST', body: form });
+          const res = await fetch('/api/export-video/render', {
+            method: 'POST',
+            body: form,
+            headers: { 'x-openmaic-stage-id': stageId },
+          });
           const data = (await res.json().catch(() => ({}))) as {
             jobId?: string;
             error?: string;
@@ -194,7 +205,9 @@ export const useVideoRenderStore = create<VideoRenderState>()((set, get) => ({
           return { status: 'submitted', taskId: data.jobId };
         },
         poll: async (jobId) => {
-          const res = await fetch(`/api/export-video/render/${jobId}`);
+          const res = await fetch(`/api/export-video/render/${jobId}`, {
+            headers: { 'x-openmaic-stage-id': stageId },
+          });
           const data = (await res.json().catch(() => ({}))) as JobStatusResponse;
           if (!res.ok) return { status: 'failed', message: data.error || `HTTP ${res.status}` };
 
@@ -223,7 +236,9 @@ export const useVideoRenderStore = create<VideoRenderState>()((set, get) => ({
           set({ percent, etaMs });
 
           if (data.status === 'succeeded') {
-            const dl = await fetch(`/api/export-video/render/${jobId}/download`);
+            const dl = await fetch(`/api/export-video/render/${jobId}/download`, {
+              headers: { 'x-openmaic-stage-id': stageId },
+            });
             if (!dl.ok) return { status: 'failed', message: `download HTTP ${dl.status}` };
             return { status: 'done', result: await dl.blob() };
           }
@@ -260,9 +275,10 @@ export const useVideoRenderStore = create<VideoRenderState>()((set, get) => ({
       } else {
         // The render started but failed / timed out. Cancel the server job so it
         // doesn't hold a concurrency slot and scratch space, then surface the error.
-        void fetch(`/api/export-video/render/${submittedJobId}`, { method: 'DELETE' }).catch(
-          () => {},
-        );
+        void fetch(`/api/export-video/render/${submittedJobId}`, {
+          method: 'DELETE',
+          headers: { 'x-openmaic-stage-id': stageId },
+        }).catch(() => {});
         log.error('Video render failed:', error);
         set({ status: 'failed', error: message });
         toast.error(t('export.videoFailed'), { id: toastId });

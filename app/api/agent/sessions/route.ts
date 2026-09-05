@@ -8,6 +8,11 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
+import {
+  authorizeOpenMaicRequest,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 import { apiError } from '@/lib/server/api-response';
 import { MAX_SESSION_TEXT_LENGTH } from '@/lib/server/agent-runtime/limits';
 import { findSkill, inferSkillIdFromPrompt, listSkills } from '@/lib/server/agent-runtime/skills';
@@ -16,7 +21,6 @@ import {
   bindOwnerMaterialsToSession,
   SessionMaterialBindingError,
 } from '@/lib/server/agent-runtime/session-materials';
-import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
 import { buildRequestOrigin, isValidClassroomId } from '@/lib/server/classroom-storage';
 import { decodeCourseRefs } from '@/lib/workbench/course-refs';
 
@@ -89,7 +93,15 @@ export async function POST(req: NextRequest) {
     return apiError('INVALID_REQUEST', 400, decodedCourseRefs.error);
   }
 
-  return withRequestOwnerId(req, async (ownerId, responseHeaders) => {
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(req, { stageId });
+  } catch (error) {
+    return openMaicAuthorizationResponse(error);
+  }
+  const ownerId = authorization.grant.personalPrincipal;
+  const responseHeaders = new Headers();
+  try {
     // An EXPLICIT skill — a `?skill=` launch link, not composer UI — is
     // rejected here rather than at claim time: a session created with a typo'd
     // skill would otherwise sit queued and then quietly build an ordinary
@@ -139,20 +151,23 @@ export async function POST(req: NextRequest) {
     const meta = await store.createSession({
       ownerId,
       prompt,
-      ...(stageId ? { stageId } : {}),
+      stageId: stageId ?? authorization.grant.stageId,
       ...(skillId ? { skillId } : {}),
       existingCourse,
       origin: buildRequestOrigin(req),
       // Keep the runner from claiming the session until its opening materials
       // and references are durable. postUserMessage below atomically requeues it.
-      ...(existingCourse || hasOpeningContext ? { status: 'succeeded' as const } : {}),
+      status: 'succeeded' as const,
     });
 
-    if (!hasOpeningContext) {
-      return NextResponse.json(meta, { status: 202, headers: responseHeaders });
-    }
-
     try {
+      await createOpenMaicJobAuthorizationManager().create({
+        sessionId: authorization.sessionId,
+        stageId: authorization.grant.stageId,
+        jobKind: 'agent',
+        jobId: meta.id,
+        jobProfile: 'teacher.agent-authoring',
+      });
       const materials = materialIds.length
         ? await bindOwnerMaterialsToSession(meta.id, ownerId, materialIds)
         : [];
@@ -180,7 +195,10 @@ export async function POST(req: NextRequest) {
       }
       throw error;
     }
-  });
+  } catch (error) {
+    console.error('[agent-runtime] authorized session creation failed', error);
+    return new Response('Internal Server Error', { status: 500, headers: responseHeaders });
+  }
 }
 
 export async function GET(req: NextRequest) {
@@ -188,9 +206,15 @@ export async function GET(req: NextRequest) {
     return new Response('Not found', { status: 404 });
   }
 
-  return withRequestOwnerId(req, async (ownerId, responseHeaders) => {
+  try {
+    const authorization = await authorizeOpenMaicRequest(req, {
+      stageId: new URL(req.url).searchParams.get('stageId'),
+      allowAnyStageGrant: true,
+    });
     const store = await getAgentSessionStore();
-    const sessions = await store.listSessionsByOwner(ownerId);
-    return NextResponse.json(sessions, { headers: responseHeaders });
-  });
+    const sessions = await store.listSessionsByOwner(authorization.grant.personalPrincipal);
+    return NextResponse.json(sessions, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (error) {
+    return openMaicAuthorizationResponse(error);
+  }
 }

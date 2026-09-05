@@ -55,6 +55,7 @@ interface ProviderConfigPanelProps {
   modelsUrl?: string;
   onResetToDefault?: () => void; // Reset provider to default configuration
   isBuiltIn: boolean; // To determine if reset button should be shown
+  managedOnly?: boolean;
 }
 
 export function ProviderConfigPanel({
@@ -72,6 +73,7 @@ export function ProviderConfigPanel({
   modelsUrl,
   onResetToDefault,
   isBuiltIn,
+  managedOnly = false,
 }: ProviderConfigPanelProps) {
   const { t } = useI18n();
 
@@ -206,7 +208,7 @@ export function ProviderConfigPanel({
   // When the operator pins an allowed model list (MODELS env/yaml), the model
   // catalog is admin-managed too — view-only, no add/edit/delete. Without a
   // pinned list the server manages only credentials and the user curates models.
-  const modelsLocked = !!providersConfig[provider.id]?.serverModels?.length;
+  const modelsLocked = managedOnly || !!providersConfig[provider.id]?.serverModels?.length;
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -219,7 +221,7 @@ export function ProviderConfigPanel({
 
       {/* Managed providers are admin-owned: the operator's key and base URL are
           authoritative and not overridable here, so the editing inputs are hidden. */}
-      {!isServerConfigured && (
+      {!isServerConfigured && !managedOnly && (
         <>
           {/* API Key */}
           <div className="space-y-2">

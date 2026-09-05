@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   recordGenerationUsage: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  putServerAssetBytes: vi.fn().mockResolvedValue('ast_persisted-video'),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -18,6 +19,9 @@ vi.mock('@/lib/server/usage-storage', () => ({
   recordGenerationUsage: mocks.recordGenerationUsage,
 }));
 vi.mock('node:fs', () => ({ promises: { mkdir: mocks.mkdir, writeFile: mocks.writeFile } }));
+vi.mock('@/lib/server/server-asset-bytes', () => ({
+  putServerAssetBytes: mocks.putServerAssetBytes,
+}));
 vi.mock('@/lib/server/ssrf-guard', () => ({ validateUrlForSSRF: async () => null }));
 vi.mock('@/lib/logger', () => ({ createLogger: () => mocks.log }));
 
@@ -41,6 +45,7 @@ function courseDeps(overrides: Record<string, unknown> = {}) {
     store: {} as never,
     onCheckpoint: () => undefined,
     sessionId: 'session-owner',
+    assetPrincipal: 'reachacademy:org:org-a:course:course-a',
     stageAccess: async () => ({ kind: 'owned' as const }),
     ...overrides,
   };
@@ -159,6 +164,7 @@ describe('generate_video tool', () => {
     expect(persistGeneratedVideo).toHaveBeenCalledWith({
       result: expect.objectContaining({ url: 'https://cdn.example.com/generated/lesson.webm' }),
       stageId: 'stage-owner',
+      assetPrincipal: undefined,
       signal: expect.any(AbortSignal),
     });
     // Success details are provider-neutral: no provider id leaks into the
@@ -196,18 +202,20 @@ describe('generate_video tool', () => {
           height: 720,
         },
         stageId: 'stage-owner',
+        assetPrincipal: 'reachacademy:org:org-a:course:course-a',
         signal: new AbortController().signal,
       }),
     ).resolves.toEqual({
-      src: expect.stringMatching(
-        /^\/api\/classroom-media\/stage-owner\/media\/generated-[a-f0-9]{64}\.mov$/,
-      ),
+      src: 'ast_persisted-video',
       mime: 'video/quicktime',
     });
-    expect(mocks.writeFile).toHaveBeenCalledWith(
-      expect.stringMatching(/\.mov$/),
-      Buffer.from('real-video-bytes'),
-    );
+    expect(mocks.putServerAssetBytes).toHaveBeenCalledWith({
+      principal: 'reachacademy:org:org-a:course:course-a',
+      bytes: Buffer.from('real-video-bytes'),
+      mime: 'video/quicktime',
+      meta: { stageId: 'stage-owner', source: 'agent-video' },
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it('fails loud when the generated video exceeds the byte cap', async () => {

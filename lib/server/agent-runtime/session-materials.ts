@@ -4,15 +4,12 @@
  * The durable row is stored in the package's `agent_session_materials` table
  * (create/list/read paging over `PgAgentSessionMaterialStore`, lazy-bound like
  * `store.ts` / `user-skill-store.ts`). The bytes are not kept on the row: the
- * extracted markdown is stored through the neutral material byte store and
- * the row records its object key. The package's legacy `textAssetId` and
+ * extracted markdown is stored through the PostgreSQL asset pool and the row
+ * records its `ast_` object id. The package's legacy `textAssetId` and
  * `rawAssetId` field names remain as compatibility columns, but their values
- * are byte-store keys rather than registry ids.
+ * are asset-pool keys rather than local byte-store paths.
  */
-import {
-  PgAgentSessionMaterialStore,
-  ensureAgentSessionMaterialSchema,
-} from '@openmaic/storage/material/pg';
+import { PgAgentSessionMaterialStore } from '@openmaic/storage/material/pg';
 import {
   createMaterialId,
   type AgentSessionMaterial,
@@ -22,7 +19,12 @@ import {
 import { getReadyOwnerMaterials } from '@/lib/persistence/owner-materials';
 
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
-import { getMaterialByteStore } from '@/lib/server/materials/bytes';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+import {
+  putServerAssetBytes,
+  removeServerAssetBytes,
+  resolveServerAssetBytes,
+} from '@/lib/server/server-asset-bytes';
 
 import { getAgentSessionStore } from './store';
 import { isPptxMaterial } from './pptx-mime';
@@ -44,11 +46,9 @@ const globalState = globalThis as typeof globalThis & {
 const storeState = (globalState[MATERIAL_STORE_STATE_KEY] ??= {});
 
 async function createMaterialStore(connectionString: string): Promise<PgAgentSessionMaterialStore> {
-  const { pool } = await getServerPersistenceProvider(connectionString);
-  // The material table references agent_sessions(id), so the agent-session
-  // schema (provisioned by getAgentSessionStore) must exist first — the same
-  // dependency the URL trust-gate table has inside that schema.
-  await ensureAgentSessionMaterialSchema(pool);
+  const { pool } = await getServerPersistenceProvider(
+    stageConnectionString(connectionString, 'draft'),
+  );
   return new PgAgentSessionMaterialStore(pool);
 }
 
@@ -78,33 +78,10 @@ export function getAgentSessionMaterialStore(): Promise<PgAgentSessionMaterialSt
   return initialization;
 }
 
-function sessionMaterialPrefix(sessionId: string): string {
-  return `materials/${sessionId}/`;
-}
-
-function sessionMaterialKey(sessionId: string, materialId: string, name: string): string {
-  return `${sessionMaterialPrefix(sessionId)}${materialId}/${name}`;
-}
-
-function rawObjectName(mime: string): string {
-  return `raw.${Buffer.from(mime, 'utf8').toString('base64url')}`;
-}
-
-function rawObjectMime(key: string): string {
-  const encoded = key
-    .split('/')
-    .at(-1)
-    ?.match(/^raw\.([A-Za-z0-9_-]+)$/)?.[1];
-  if (!encoded) return 'application/octet-stream';
-  try {
-    return Buffer.from(encoded, 'base64url').toString('utf8') || 'application/octet-stream';
-  } catch {
-    return 'application/octet-stream';
-  }
-}
-
-function isSessionMaterialKey(sessionId: string, key: string): boolean {
-  return key.startsWith(sessionMaterialPrefix(sessionId));
+async function materialPrincipal(sessionId: string): Promise<string> {
+  const session = await (await getAgentSessionStore()).getSession(sessionId);
+  if (!session?.ownerId) throw new SessionMaterialBindingError('material session is unavailable');
+  return session.ownerId;
 }
 
 /**
@@ -123,19 +100,23 @@ export async function createWebMaterial(
   if (!connectionString) throw new Error('Agent runtime requires DATABASE_URL');
   const id = createMaterialId();
   const body = Buffer.from(page.markdown, 'utf8');
-  const textObjectKey = sessionMaterialKey(sessionId, id, 'text.md');
-  const byteStore = getMaterialByteStore();
+  const principal = await materialPrincipal(sessionId);
   // Initialize the row store before writing bytes, narrowing the non-atomic
   // byte/metadata handoff to the two business writes themselves.
   const store = await getAgentSessionMaterialStore();
-  await byteStore.put(textObjectKey, body, 'text/markdown');
+  const textAssetId = await putServerAssetBytes({
+    principal,
+    bytes: body,
+    mime: 'text/markdown',
+    meta: { source: 'session-web-material', sessionId, materialId: id },
+  });
   try {
     return await store.createMaterial(sessionId, {
       id,
       kind: 'web',
       title: page.title.slice(0, 180) || undefined,
       sourceUrl: page.sourceUrl,
-      textAssetId: textObjectKey,
+      textAssetId,
       textChars: page.markdown.length,
     });
   } catch (error) {
@@ -147,7 +128,7 @@ export async function createWebMaterial(
     const committed = await store.getMaterial(sessionId, id).catch(() => undefined);
     if (committed) return committed;
     if (committed === null) {
-      await byteStore.delete(textObjectKey).catch(() => undefined);
+      await removeServerAssetBytes(principal, textAssetId).catch(() => undefined);
     }
     throw error;
   }
@@ -181,16 +162,20 @@ export async function createSourceMaterial(
   if (!connectionString) throw new Error('Agent runtime requires DATABASE_URL');
   const id = createMaterialId();
   const body = Buffer.from(input.bytes);
-  const rawObjectKey = sessionMaterialKey(sessionId, id, rawObjectName(input.mimeType));
-  const byteStore = getMaterialByteStore();
+  const principal = await materialPrincipal(sessionId);
   const store = await getAgentSessionMaterialStore();
-  await byteStore.put(rawObjectKey, body, input.mimeType);
+  const rawAssetId = await putServerAssetBytes({
+    principal,
+    bytes: body,
+    mime: input.mimeType,
+    meta: { source: 'session-upload', sessionId, materialId: id },
+  });
   try {
     return await store.createMaterial(sessionId, {
       id,
       kind: 'source',
       title: input.filename,
-      rawAssetId: rawObjectKey,
+      rawAssetId,
       textChars: 0,
     });
   } catch (error) {
@@ -199,7 +184,7 @@ export async function createSourceMaterial(
     const committed = await store.getMaterial(sessionId, id).catch(() => undefined);
     if (committed) return committed;
     if (committed === null) {
-      await byteStore.delete(rawObjectKey).catch(() => undefined);
+      await removeServerAssetBytes(principal, rawAssetId).catch(() => undefined);
     }
     throw error;
   }
@@ -217,9 +202,12 @@ export async function bindOwnerMaterialsToSession(
 ): Promise<Array<{ materialId: string; originalName?: string; mime?: string; bytes: number }>> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('Agent runtime requires DATABASE_URL');
-  const provider = await getServerPersistenceProvider(connectionString);
+  const provider = await getServerPersistenceProvider(
+    stageConnectionString(connectionString, 'draft'),
+  );
   const records = await getReadyOwnerMaterials(provider.pool, ownerId, materialIds);
-  const byteStore = getMaterialByteStore();
+  const principal = await materialPrincipal(sessionId);
+  if (principal !== ownerId) throw new SessionMaterialBindingError('material owner mismatch');
   const byId = new Map(records.map((record) => [record.id, record]));
   if (materialIds.some((id) => !byId.has(id))) {
     throw new SessionMaterialBindingError('one or more materials are unavailable');
@@ -229,26 +217,21 @@ export async function bindOwnerMaterialsToSession(
   for (const id of materialIds) {
     const record = byId.get(id)!;
     if (!(await store.getMaterial(sessionId, id))) {
-      let source: Buffer;
-      try {
-        source = await byteStore.get(record.ossKey);
-      } catch {
+      const source = await resolveServerAssetBytes(ownerId, record.ossKey);
+      if (!source) {
         throw new SessionMaterialBindingError(`material ${id} bytes are unavailable`);
       }
       const mime = record.mime ?? 'application/octet-stream';
-      const rawObjectKey = sessionMaterialKey(sessionId, id, rawObjectName(mime));
-      await byteStore.put(rawObjectKey, source, mime);
       try {
         await store.createMaterial(sessionId, {
           id,
           kind: 'source',
           title: record.originalName ?? id,
-          rawAssetId: rawObjectKey,
+          rawAssetId: record.ossKey,
           textChars: 0,
         });
       } catch (error) {
         if (!(await store.getMaterial(sessionId, id))) {
-          await byteStore.delete(rawObjectKey).catch(() => undefined);
           throw error;
         }
       }
@@ -322,12 +305,8 @@ export async function resolveSessionMaterialText(
   sessionId: string,
   textAssetId: string,
 ): Promise<Buffer | null> {
-  if (!isSessionMaterialKey(sessionId, textAssetId)) return null;
-  try {
-    return await getMaterialByteStore().get(textAssetId);
-  } catch {
-    return null;
-  }
+  const resolved = await resolveServerAssetBytes(await materialPrincipal(sessionId), textAssetId);
+  return resolved?.bytes ?? null;
 }
 
 /**
@@ -340,9 +319,12 @@ export async function storeSessionMaterialRawAsset(
   bytes: Buffer,
   mime: string,
 ): Promise<string> {
-  const key = sessionMaterialKey(sessionId, createMaterialId(), rawObjectName(mime));
-  await getMaterialByteStore().put(key, bytes, mime);
-  return key;
+  return putServerAssetBytes({
+    principal: await materialPrincipal(sessionId),
+    bytes,
+    mime,
+    meta: { source: 'session-extraction', sessionId },
+  });
 }
 
 /**
@@ -354,12 +336,7 @@ export async function resolveSessionMaterialRawAsset(
   sessionId: string,
   rawAssetId: string,
 ): Promise<{ bytes: Buffer; mime: string } | null> {
-  if (!isSessionMaterialKey(sessionId, rawAssetId)) return null;
-  try {
-    return { bytes: await getMaterialByteStore().get(rawAssetId), mime: rawObjectMime(rawAssetId) };
-  } catch {
-    return null;
-  }
+  return resolveServerAssetBytes(await materialPrincipal(sessionId), rawAssetId);
 }
 
 /**
@@ -370,8 +347,7 @@ export async function removeSessionMaterialRawAsset(
   sessionId: string,
   rawAssetId: string,
 ): Promise<void> {
-  if (!isSessionMaterialKey(sessionId, rawAssetId)) return;
-  await getMaterialByteStore().delete(rawAssetId);
+  await removeServerAssetBytes(await materialPrincipal(sessionId), rawAssetId);
 }
 
 /**

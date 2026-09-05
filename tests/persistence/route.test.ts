@@ -1,12 +1,43 @@
 import type { RequestListener } from 'node:http';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+
+const bridgeMocks = vi.hoisted(() => ({
+  authorizeOpenMaicRequest: vi.fn(),
+  assertOpenMaicCatalogReady: vi.fn(),
+}));
 
 describe('embedded persistence route', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('ASSET_S3_BUCKET', '');
+    bridgeMocks.authorizeOpenMaicRequest.mockReset();
+    bridgeMocks.authorizeOpenMaicRequest.mockImplementation(async (request: Request) => {
+      const url = new URL(request.url);
+      const documentMatch = /\/documents\/([^/]+)/.exec(url.pathname);
+      const stageId =
+        request.headers.get('x-openmaic-stage-id') ??
+        (documentMatch ? decodeURIComponent(documentMatch[1]) : 'adapter-test');
+      return {
+        grant: {
+          stageId,
+          stage: 'draft',
+          coursePrincipal: 'adapter-test-owner',
+          learnerKey: 'reachacademy:subject:test:course:test',
+        },
+      };
+    });
+    bridgeMocks.assertOpenMaicCatalogReady.mockReset();
+    bridgeMocks.assertOpenMaicCatalogReady.mockResolvedValue(undefined);
+    vi.doMock('@/lib/reachacademy/bridge/guard', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/reachacademy/bridge/guard')>()),
+      authorizeOpenMaicRequest: bridgeMocks.authorizeOpenMaicRequest,
+    }));
+    vi.doMock('@/lib/persistence/catalog-readiness', () => ({
+      assertOpenMaicCatalogReady: bridgeMocks.assertOpenMaicCatalogReady,
+    }));
     vi.doMock('@/lib/persistence/stage-meta', () => ({
       ensureStageMetaSchema: vi.fn().mockResolvedValue(undefined),
       readStageMeta: vi.fn().mockResolvedValue({
@@ -36,41 +67,94 @@ describe('embedded persistence route', () => {
     });
   });
 
-  it('refuses configured persistence when the development token is missing', async () => {
+  it('does not retain the retired development-token gate', async () => {
     vi.stubEnv('DATABASE_URL', 'postgres://unused-in-this-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', '');
     const { GET } = await import('@/app/api/persistence/[...path]/route');
 
     const response = await GET(new Request('http://localhost/api/persistence/documents'));
 
-    expect(response.status).toBe(503);
+    expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
       error: {
-        code: 'PERSISTENCE_DEV_TOKEN_MISSING',
-        message: 'server persistence requires PERSISTENCE_DEV_TOKEN (development auth only)',
+        code: 'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+        message: 'document listing is disabled; address a document by stageId',
+      },
+    });
+  });
+
+  it('does not trust a browser stage selector', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://stage-test');
+    const { GET } = await import('@/app/api/persistence/[...path]/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/persistence/documents?stage=public', {
+        headers: { authorization: 'Bearer test-token' },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+        message: 'document listing is disabled; address a document by stageId',
+      },
+    });
+  });
+
+  it('keeps document enumeration disabled for every stage', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://stage-test');
+    const { GET } = await import('@/app/api/persistence/[...path]/route');
+
+    const response = await GET(
+      new Request('http://localhost/api/persistence/documents?stage=published', {
+        headers: { authorization: 'Bearer test-token' },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+        message: 'document listing is disabled; address a document by stageId',
+      },
+    });
+  });
+
+  it('rejects mutations against the published stage before opening storage', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgres://stage-test');
+    const { OpenMaicAuthorizationError } = await import('@/lib/reachacademy/bridge/guard');
+    bridgeMocks.authorizeOpenMaicRequest.mockRejectedValueOnce(
+      new OpenMaicAuthorizationError(403, 'OPENMAIC_CAPABILITY_DENIED'),
+    );
+    const { POST } = await import('@/app/api/persistence/[...path]/route');
+
+    const response = await POST(
+      new Request('http://localhost/api/persistence/documents/stage-1?stage=published', {
+        method: 'POST',
+        headers: { authorization: 'Bearer test-token' },
+        body: '{}',
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'OPENMAIC_CAPABILITY_DENIED',
+        message: 'request denied',
       },
     });
   });
 
   it('retries initialization on the next request after a failed pool initialization', async () => {
-    const ensureSchema = vi
-      .fn()
+    bridgeMocks.assertOpenMaicCatalogReady
       .mockRejectedValueOnce(new Error('postgres is still starting'))
       .mockResolvedValue(undefined);
-    const ensureDocumentSchema = vi.fn().mockResolvedValue(undefined);
     const failedPool = { end: vi.fn().mockResolvedValue(undefined) };
     const workingPool = { end: vi.fn().mockResolvedValue(undefined) };
 
-    vi.doMock('@openmaic/storage/runtime/pg', () => ({
-      ensureSchema,
-      PgRuntimeStore: class {},
-    }));
-    vi.doMock('@openmaic/storage/document/pg', () => ({
-      ensureDocumentSchema,
-      PgDocumentStore: class {},
-    }));
+    vi.doMock('@openmaic/storage/runtime/pg', () => ({ PgRuntimeStore: class {} }));
+    vi.doMock('@openmaic/storage/document/pg', () => ({ PgDocumentStore: class {} }));
     vi.doMock('@openmaic/storage/asset/pg', () => ({
-      ensureAssetSchema: vi.fn().mockResolvedValue(undefined),
       PgAssetStore: class {},
     }));
     vi.doMock('@openmaic/storage/asset/pg-bytes', () => ({
@@ -92,7 +176,6 @@ describe('embedded persistence route', () => {
       ),
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://retry-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
     const request = () =>
       new Request('http://localhost/api/persistence/runtime/sessions', {
@@ -108,7 +191,7 @@ describe('embedded persistence route', () => {
 
     expect(first.status).toBe(500);
     expect(second.status).toBe(204);
-    expect(ensureSchema).toHaveBeenCalledTimes(2);
+    expect(bridgeMocks.assertOpenMaicCatalogReady).toHaveBeenCalledTimes(2);
     expect(failedPool.end).toHaveBeenCalledOnce();
     expect(workingPool.end).not.toHaveBeenCalled();
 
@@ -124,11 +207,8 @@ describe('embedded persistence route', () => {
     expect(hmrPoolFactory).not.toHaveBeenCalled();
   });
 
-  it('mounts an asset store on the document pool and transaction and ensures its schema', async () => {
+  it('mounts an asset store after read-only catalog validation', async () => {
     const sdkModuleResolved = vi.fn();
-    const ensureSchema = vi.fn().mockResolvedValue(undefined);
-    const ensureDocumentSchema = vi.fn().mockResolvedValue(undefined);
-    const ensureAssetSchema = vi.fn().mockResolvedValue(undefined);
     const transaction = vi.fn();
     const nodePostgresTransaction = vi.fn(() => transaction);
     const runtimeConstructions: Array<{
@@ -143,7 +223,6 @@ describe('embedded persistence route', () => {
     const handlerOptions: unknown[] = [];
 
     vi.doMock('@openmaic/storage/runtime/pg', () => ({
-      ensureSchema,
       PgRuntimeStore: class {
         constructor(queryable: unknown, options: unknown) {
           runtimeConstructions.push({ queryable, options, instance: this });
@@ -151,7 +230,6 @@ describe('embedded persistence route', () => {
       },
     }));
     vi.doMock('@openmaic/storage/document/pg', () => ({
-      ensureDocumentSchema,
       PgDocumentStore: class {
         constructor(queryable: unknown, options: unknown) {
           documentConstructions.push({ queryable, options });
@@ -167,7 +245,6 @@ describe('embedded persistence route', () => {
       },
     }));
     vi.doMock('@openmaic/storage/asset/pg', () => ({
-      ensureAssetSchema,
       PgAssetStore: class {
         constructor(queryable: unknown, options: unknown) {
           assetConstructions.push({ queryable, options, instance: this });
@@ -194,7 +271,6 @@ describe('embedded persistence route', () => {
       throw new Error('the optional SDK must not resolve without a bucket');
     });
     vi.stubEnv('DATABASE_URL', 'postgres://asset-wiring-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
     const pool = { end: vi.fn().mockResolvedValue(undefined) };
 
@@ -206,9 +282,7 @@ describe('embedded persistence route', () => {
     );
 
     expect(response.status).toBe(204);
-    expect(ensureSchema).toHaveBeenCalledWith(pool);
-    expect(ensureDocumentSchema).toHaveBeenCalledWith(pool);
-    expect(ensureAssetSchema).toHaveBeenCalledWith(pool);
+    expect(bridgeMocks.assertOpenMaicCatalogReady).toHaveBeenCalledWith(pool, 'openmaic_draft');
     expect(nodePostgresTransaction).toHaveBeenCalledWith(pool);
     expect(runtimeConstructions[0]?.queryable).toBe(pool);
     expect(documentConstructions[0]?.queryable).toBe(pool);
@@ -237,7 +311,7 @@ describe('embedded persistence route', () => {
     const { getServerPersistenceProvider } = await import('@/lib/persistence/server-provider');
     const secondPoolFactory = vi.fn();
     const sharedProvider = await getServerPersistenceProvider(
-      'postgres://asset-wiring-test',
+      stageConnectionString('postgres://asset-wiring-test', 'draft'),
       secondPoolFactory,
     );
     expect(sharedProvider.runtimeStore).toBe(runtimeConstructions[0]?.instance);
@@ -245,7 +319,7 @@ describe('embedded persistence route', () => {
     expect(sdkModuleResolved).not.toHaveBeenCalled();
   });
 
-  it('defers S3 resolution to the first asset byte operation', async () => {
+  it('fails closed before storage initialization when S3 is configured', async () => {
     const pgByteStore = vi.fn();
     const assetOptions: unknown[] = [];
     const s3ModuleResolved = vi.fn();
@@ -294,7 +368,6 @@ describe('embedded persistence route', () => {
       return { loadS3AssetByteStore };
     });
     vi.stubEnv('DATABASE_URL', 'postgres://asset-s3-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     vi.stubEnv('ASSET_S3_BUCKET', '  asset-bucket  ');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
 
@@ -306,27 +379,15 @@ describe('embedded persistence route', () => {
       { poolFactory: () => ({ end: vi.fn().mockResolvedValue(undefined) }) as never },
     );
 
-    // Handler initialization leaves the byte layer unresolved: the mocked
-    // handler never touches it, so neither the SDK module nor the PostgreSQL
-    // byte store has been constructed yet.
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(500);
     expect(s3ModuleResolved).not.toHaveBeenCalled();
     expect(loadS3AssetByteStore).not.toHaveBeenCalled();
     expect(pgByteStore).not.toHaveBeenCalled();
-
-    // The first byte operation resolves through the single-loader path, with
-    // the configured bucket trimmed.
-    const byteStore = (assetOptions[0] as { byteStore?: unknown }).byteStore as {
-      read(hash: never): Promise<unknown>;
-    };
-    await expect(byteStore.read('sha256-x' as never)).resolves.toEqual(new Uint8Array([1]));
-    expect(s3ModuleResolved).toHaveBeenCalledOnce();
-    expect(loadS3AssetByteStore).toHaveBeenCalledExactlyOnceWith('asset-bucket');
-    expect(pgByteStore).not.toHaveBeenCalled();
-    expect(s3Read).toHaveBeenCalledWith('sha256-x');
+    expect(assetOptions).toEqual([]);
+    expect(s3Read).not.toHaveBeenCalled();
   });
 
-  it('contains a malformed S3 bucket to asset traffic instead of failing persistence', async () => {
+  it('fails closed for a malformed S3 bucket before serving persistence', async () => {
     const s3ModuleResolved = vi.fn();
     const assetOptions: unknown[] = [];
     vi.doMock('@openmaic/storage/runtime/pg', () => ({
@@ -368,13 +429,10 @@ describe('embedded persistence route', () => {
       return { loadS3AssetByteStore: vi.fn() };
     });
     vi.stubEnv('DATABASE_URL', 'postgres://invalid-s3-bucket-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     vi.stubEnv('ASSET_S3_BUCKET', 'Invalid_Bucket');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
     const poolFactory = vi.fn(() => ({ end: vi.fn().mockResolvedValue(undefined) }));
 
-    // The malformed bucket no longer gates handler initialization: document
-    // and runtime traffic initializes and serves normally.
     const response = await handlePersistenceRequest(
       new Request('http://localhost/api/persistence/runtime/sessions', {
         headers: { authorization: 'Bearer test-token' },
@@ -382,22 +440,13 @@ describe('embedded persistence route', () => {
       { poolFactory: poolFactory as never },
     );
 
-    expect(response.status).toBe(204);
+    expect(response.status).toBe(500);
     expect(poolFactory).toHaveBeenCalledOnce();
     expect(s3ModuleResolved).not.toHaveBeenCalled();
-
-    // The misconfiguration surfaces on the first asset byte operation, naming
-    // the variable at fault, and never reaches for the SDK.
-    const byteStore = (assetOptions[0] as { byteStore?: unknown }).byteStore as {
-      read(hash: never): Promise<unknown>;
-    };
-    await expect(byteStore.read('sha256-x' as never)).rejects.toThrow(
-      'Invalid ASSET_S3_BUCKET: expected a valid Amazon S3 general purpose bucket name',
-    );
-    expect(s3ModuleResolved).not.toHaveBeenCalled();
+    expect(assetOptions).toEqual([]);
   });
 
-  it('does not cache a failed byte-store construction: the next asset request retries', async () => {
+  it('does not resolve an S3 byte store in ReachAcademy mode', async () => {
     const assetOptions: unknown[] = [];
     const loadS3AssetByteStore = vi
       .fn()
@@ -439,7 +488,6 @@ describe('embedded persistence route', () => {
     }));
     vi.doMock('@openmaic/storage/asset/s3-bytes', () => ({ loadS3AssetByteStore }));
     vi.stubEnv('DATABASE_URL', 'postgres://asset-s3-retry-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     vi.stubEnv('ASSET_S3_BUCKET', 'asset-bucket');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
 
@@ -450,19 +498,9 @@ describe('embedded persistence route', () => {
       { poolFactory: () => ({ end: vi.fn().mockResolvedValue(undefined) }) as never },
     );
 
-    // An SDK that cannot be resolved must not reach handler initialization.
-    expect(response.status).toBe(204);
-
-    const byteStore = (assetOptions[0] as { byteStore?: unknown }).byteStore as {
-      read(hash: never): Promise<unknown>;
-    };
-    await expect(byteStore.read('sha256-x' as never)).rejects.toThrow(
-      '@aws-sdk/client-s3 could not be resolved',
-    );
-    // Installing the dependency fixes an already-initialized handler: the
-    // rejection was not latched into the wrapper.
-    await expect(byteStore.read('sha256-x' as never)).resolves.toEqual(new Uint8Array([1]));
-    expect(loadS3AssetByteStore).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(500);
+    expect(assetOptions).toEqual([]);
+    expect(loadS3AssetByteStore).not.toHaveBeenCalled();
   });
 
   it('passes one complete app payload-validator table to Pg and HTTP boundaries', async () => {
@@ -503,7 +541,6 @@ describe('embedded persistence route', () => {
       }),
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://validator-wiring-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     const [{ handlePersistenceRequest }, { APP_RUNTIME_PAYLOAD_VALIDATORS }] = await Promise.all([
       import('@/app/api/persistence/[...path]/route'),
       import('@/lib/runtime/payload-validators'),
@@ -579,7 +616,6 @@ describe('embedded persistence route', () => {
       ),
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://adapter-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     const { handlePersistenceRequest } = await import('@/app/api/persistence/[...path]/route');
     const pool = { end: vi.fn().mockResolvedValue(undefined) };
 
@@ -632,7 +668,6 @@ describe('embedded persistence route', () => {
       createStorageHttpHandler: vi.fn(() => handler),
     }));
     vi.stubEnv('DATABASE_URL', connectionString);
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
   };
 
   const readAdapterBody = async (path: string) => {
@@ -835,7 +870,6 @@ describe('embedded persistence route', () => {
       DEFAULT_SIGNED_URL_TTL_SECONDS: 60,
     }));
     vi.stubEnv('DATABASE_URL', connectionString);
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
   };
 
   const requestThroughRoute = async () => {
@@ -962,7 +996,7 @@ describe('embedded persistence route', () => {
     warn.mockRestore();
   });
 
-  it('forwards byte URL signing through the lazy byte store only when the layer supports it', async () => {
+  it('does not expose S3 URL signing in ReachAcademy mode', async () => {
     const assetOptions: unknown[] = [];
     const signReadUrl = vi.fn().mockResolvedValue('https://objects.example/signed');
     vi.doMock('@openmaic/storage/runtime/pg', () => ({
@@ -1003,25 +1037,12 @@ describe('embedded persistence route', () => {
       loadS3AssetByteStore: vi.fn().mockResolvedValue({ signReadUrl }),
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://egress-signing-forward-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
     vi.stubEnv('ASSET_S3_BUCKET', 'asset-bucket');
 
     const response = await requestThroughRoute();
-    expect(response.status).toBe(204);
-
-    const byteStore = (assetOptions[0] as { byteStore?: unknown }).byteStore as {
-      signReadUrl(hash: string, headers: unknown): Promise<unknown>;
-    };
-    const headers = {
-      contentType: 'image/png',
-      cacheControl: 'private, no-store',
-      expiresInSeconds: 60,
-    };
-    // The S3 layer signs, and the wrapper forwards hash and headers untouched.
-    await expect(byteStore.signReadUrl('sha256-x', headers)).resolves.toBe(
-      'https://objects.example/signed',
-    );
-    expect(signReadUrl).toHaveBeenCalledExactlyOnceWith('sha256-x', headers);
+    expect(response.status).toBe(500);
+    expect(assetOptions).toEqual([]);
+    expect(signReadUrl).not.toHaveBeenCalled();
   });
 
   it('declines byte URL signing when the PostgreSQL byte layer has no signer', async () => {
@@ -1065,7 +1086,6 @@ describe('embedded persistence route', () => {
       ),
     }));
     vi.stubEnv('DATABASE_URL', 'postgres://egress-signing-decline-test');
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
 
     const response = await requestThroughRoute();
     expect(response.status).toBe(204);
@@ -1085,6 +1105,24 @@ describe('embedded persistence route -- real handler boundary', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('ASSET_S3_BUCKET', '');
+    bridgeMocks.authorizeOpenMaicRequest.mockReset();
+    bridgeMocks.authorizeOpenMaicRequest.mockResolvedValue({
+      grant: {
+        stageId: 'adapter-test',
+        stage: 'draft',
+        coursePrincipal: 'adapter-test-owner',
+        learnerKey: 'reachacademy:subject:test:course:test',
+      },
+    });
+    bridgeMocks.assertOpenMaicCatalogReady.mockReset();
+    bridgeMocks.assertOpenMaicCatalogReady.mockResolvedValue(undefined);
+    vi.doMock('@/lib/reachacademy/bridge/guard', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/reachacademy/bridge/guard')>()),
+      authorizeOpenMaicRequest: bridgeMocks.authorizeOpenMaicRequest,
+    }));
+    vi.doMock('@/lib/persistence/catalog-readiness', () => ({
+      assertOpenMaicCatalogReady: bridgeMocks.assertOpenMaicCatalogReady,
+    }));
   });
 
   // The composed path the mocked tests cannot see: the route's Fetch<->Node
@@ -1168,7 +1206,6 @@ describe('embedded persistence route -- real handler boundary', () => {
       nodePostgresTransaction: vi.fn(() => vi.fn()),
     }));
     vi.stubEnv('DATABASE_URL', connectionString);
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token');
   }
 
   const authed = (path: string, extraHeaders: Record<string, string> = {}) =>
@@ -1190,9 +1227,7 @@ describe('embedded persistence route -- real handler boundary', () => {
     const store = stores[0]!;
     const id = await store.put(
       {
-        // The dev authenticator issues one shared asset principal for every
-        // request, so the stored entry must live under it to be readable.
-        key: 'shared',
+        key: 'adapter-test-owner',
       },
       new Blob(['real-bytes'], { type: 'text/plain' }),
       {
@@ -1208,6 +1243,7 @@ describe('embedded persistence route -- real handler boundary', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/png');
     expect(response.headers.get('x-asset-revision')).toBe('1');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('real-bytes');
   });
 
@@ -1228,9 +1264,7 @@ describe('embedded persistence route -- real handler boundary', () => {
     expect(first.status).not.toBe(500);
     const id = await stores[0]!.put(
       {
-        // The dev authenticator issues one shared asset principal for every
-        // request, so the stored entry must live under it to be readable.
-        key: 'shared',
+        key: 'adapter-test-owner',
       },
       new Blob(['real-bytes'], { type: 'text/plain' }),
       { contentType: 'image/png' },
@@ -1277,6 +1311,7 @@ describe('embedded persistence route -- real handler boundary', () => {
       url: 'https://objects.example/signed',
       revision: 1,
     });
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
   });
 
   it('serves bytes directly when the byte layer declines to sign', async () => {
@@ -1289,6 +1324,7 @@ describe('embedded persistence route -- real handler boundary', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('image/png');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('real-bytes');
   });
 
@@ -1308,6 +1344,7 @@ describe('embedded persistence route -- real handler boundary', () => {
     );
 
     expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('real-bytes');
     warn.mockRestore();
   });

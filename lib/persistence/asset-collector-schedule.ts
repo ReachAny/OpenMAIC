@@ -17,7 +17,6 @@
  * election, or advisory lock is needed here — please do not add one.
  */
 import { AssetCollector } from '@openmaic/storage/asset/collector';
-import { ensureAssetSchema } from '@openmaic/storage/asset/pg';
 import {
   nodePostgresTransaction,
   type ConnectableQueryable,
@@ -26,6 +25,8 @@ import { Pool } from 'pg';
 
 import { resolveAssetCollectionGraceMs } from '@/lib/persistence/asset-collection-grace';
 import { configuredS3Bucket, createAssetByteStore } from '@/lib/persistence/asset-byte-store';
+import { assertOpenMaicCatalogReady } from '@/lib/persistence/catalog-readiness';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
 
 /**
  * Fifteen minutes. Short enough that a deleted asset's bytes go the same day,
@@ -96,11 +97,11 @@ export function startAssetCollectorSchedule(
 
   // No database, no collector. DATABASE_URL is what makes server persistence
   // real; without it every asset lives in the browser and nothing here has
-  // anything to reclaim. PERSISTENCE_DEV_TOKEN deliberately does not gate this:
-  // it authenticates the HTTP surface, and bytes already written still have to
-  // be reclaimed if it is later removed.
+  // anything to reclaim. Request authentication does not gate background
+  // reclamation; bytes already written still need to be collected.
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) return undefined;
+  if (process.env.ASSET_S3_BUCKET?.trim()) return undefined;
   if (!collectionEnabled()) return undefined;
 
   const intervalMs = durationEnv(
@@ -118,7 +119,7 @@ export function startAssetCollectorSchedule(
   const graceMs = resolveAssetCollectionGraceMs();
 
   const pool = (deps.poolFactory ?? ((value) => new Pool({ connectionString: value, max: 2 })))(
-    connectionString,
+    stageConnectionString(connectionString, 'draft'),
   );
   const queryable = pool as unknown as ConnectableQueryable;
 
@@ -128,7 +129,7 @@ export function startAssetCollectorSchedule(
   // failure is logged and retried instead of escaping into server startup.
   let prepared: Promise<AssetCollector> | undefined;
   const prepare = async (): Promise<AssetCollector> => {
-    await ensureAssetSchema(queryable);
+    await assertOpenMaicCatalogReady(queryable, 'openmaic_draft');
     const byteStore = await createAssetByteStore(
       configuredS3Bucket(process.env.ASSET_S3_BUCKET),
       queryable,

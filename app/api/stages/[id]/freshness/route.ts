@@ -25,7 +25,10 @@
 import type { NextRequest } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
+import {
+  authorizeOpenMaicRequest,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 import { ownerNotFound } from '@/lib/server/agent-runtime/route-response';
 
@@ -47,8 +50,14 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
   const responseHeaders = new Headers();
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
   const { id: stageId } = await params;
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(req, { stageId });
+  } catch (error) {
+    return openMaicAuthorizationResponse(error);
+  }
+  const ownerId = authorization.grant.coursePrincipal;
 
   // Existence-gated, exactly like the manifest route: the owner-bound store
   // reads a foreign or missing stage as absent, and the 404 carries the
@@ -60,13 +69,16 @@ export async function GET(req: NextRequest, { params }: Params) {
   const encoder = new TextEncoder();
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let grantExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   let closed = false;
 
   const clearTimers = () => {
     if (pollTimer) clearTimeout(pollTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (grantExpiryTimer) clearTimeout(grantExpiryTimer);
     pollTimer = null;
     heartbeatTimer = null;
+    grantExpiryTimer = null;
   };
 
   const stream = new ReadableStream<Uint8Array>({
@@ -84,6 +96,28 @@ export async function GET(req: NextRequest, { params }: Params) {
           return false;
         }
       };
+
+      grantExpiryTimer = setTimeout(
+        () => {
+          if (closed) return;
+          write(
+            `event: authorization_expired\ndata: ${JSON.stringify({
+              type: 'authorization_expired',
+              stageId,
+              action: 'renew_and_reconnect',
+            })}\n\n`,
+          );
+          closed = true;
+          clearTimers();
+          try {
+            controller.close();
+          } catch {
+            // The client disconnected at the expiry boundary.
+          }
+        },
+        Math.max(0, authorization.grant.expiresAt - Date.now()),
+      );
+      grantExpiryTimer.unref?.();
 
       let lastRev = 0;
 
@@ -144,7 +178,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
+      'Cache-Control': 'private, no-store',
       Connection: 'keep-alive',
       ...Object.fromEntries(responseHeaders),
     },

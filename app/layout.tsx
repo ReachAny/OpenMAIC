@@ -10,8 +10,16 @@ import { I18nProvider } from '@/lib/hooks/use-i18n';
 import { Toaster } from '@/components/ui/sonner';
 import { ServerProvidersInit } from '@/components/server-providers-init';
 import { StorageHealthNotice } from '@/components/storage-health-notice';
-import { AccessCodeGuard } from '@/components/access-code-guard';
 import { ProSwapWatcher } from '@/components/workbench/ProSwapWatcher';
+import { OpenMaicCapabilitiesProvider } from '@/lib/reachacademy/bridge/client-capabilities';
+import { getServerOpenMaicCapabilities } from '@/lib/reachacademy/bridge/server-capabilities';
+import { GrantRequiredGate } from '@/components/reachacademy/GrantRequiredGate';
+import { GrantRenewalMount } from '@/components/reachacademy/GrantRenewalMount';
+
+// Capabilities are derived from the request's HttpOnly OpenMAIC session
+// cookie. Prevent Next from baking an unauthenticated build-time snapshot into
+// the root layout.
+export const dynamic = 'force-dynamic';
 
 // The UI font is loaded from @fontsource's stylesheet rather than next/font,
 // because only the stylesheet carries the per-subset `unicode-range`
@@ -34,11 +42,12 @@ export const metadata: Metadata = {
     'The open-source AI interactive classroom. Upload a PDF to instantly generate an immersive, multi-agent learning experience.',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const bridgeCapabilities = await getServerOpenMaicCapabilities();
   return (
     <html lang="en" suppressHydrationWarning>
       <body
@@ -47,10 +56,13 @@ export default function RootLayout({
       >
         <ThemeProvider>
           <I18nProvider>
-            <ServerProvidersInit />
-            <ProSwapWatcher />
-            <AccessCodeGuard>{children}</AccessCodeGuard>
-            <Toaster position="top-center" />
+            <OpenMaicCapabilitiesProvider value={bridgeCapabilities}>
+              <GrantRenewalMount />
+              <ServerProvidersInit />
+              <ProSwapWatcher />
+              <GrantRequiredGate>{children}</GrantRequiredGate>
+              <Toaster position="top-center" />
+            </OpenMaicCapabilitiesProvider>
             {/* After the Toaster: this one raises a toast on mount when
                 persistence is already broken, and a toast raised before its
                 host exists has nowhere to go. */}

@@ -1,50 +1,72 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  getServerOpenMaicCapabilities: vi.fn(),
+}));
+
+vi.mock('@/lib/reachacademy/bridge/server-capabilities', () => ({
+  getServerOpenMaicCapabilities: mocks.getServerOpenMaicCapabilities,
+}));
+
 import { isWorkbenchEntryEnabled } from '@/lib/workbench/entry-gate';
 
-const FLAGS = [
-  'NEXT_PUBLIC_PRO_WORKBENCH_ENABLED',
-  'OPENMAIC_AGENT_RUNTIME_ENABLED',
-  'DATABASE_URL',
-] as const;
-
 describe('workbench entry gate', () => {
-  const originals = new Map<string, string | undefined>();
-
   beforeEach(() => {
-    for (const name of FLAGS) {
-      originals.set(name, process.env[name]);
-      delete process.env[name];
-    }
+    mocks.getServerOpenMaicCapabilities.mockReset();
+    mocks.getServerOpenMaicCapabilities.mockResolvedValue({ databaseReady: true, grants: [] });
   });
 
-  afterEach(() => {
-    for (const name of FLAGS) {
-      const original = originals.get(name);
-      if (original === undefined) delete process.env[name];
-      else process.env[name] = original;
-    }
-    originals.clear();
+  it('stays closed without a verified draft authoring grant', async () => {
+    await expect(isWorkbenchEntryEnabled()).resolves.toBe(false);
   });
 
-  it.each([
-    ['all flags are absent', undefined, undefined, undefined],
-    ['the public entry flag is off', undefined, 'true', 'postgres://runtime'],
-    ['the runtime is off', 'true', undefined, 'postgres://runtime'],
-    ['the database URL is absent', 'true', 'true', undefined],
-    ['the database URL is blank', 'true', 'true', '   '],
-  ])('keeps both entry routes closed when %s', (_case, publicFlag, runtimeFlag, databaseUrl) => {
-    if (publicFlag !== undefined) process.env.NEXT_PUBLIC_PRO_WORKBENCH_ENABLED = publicFlag;
-    if (runtimeFlag !== undefined) process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = runtimeFlag;
-    if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
+  it('opens for a server-verified draft authoring grant', async () => {
+    mocks.getServerOpenMaicCapabilities.mockResolvedValue({
+      databaseReady: true,
+      grants: [
+        {
+          stage: 'draft',
+          documentWrite: true,
+          agentRead: true,
+          modelInvoke: true,
+        },
+      ],
+    });
 
-    expect(isWorkbenchEntryEnabled()).toBe(false);
+    await expect(isWorkbenchEntryEnabled()).resolves.toBe(true);
   });
 
-  it('opens both entry routes only for an enabled, configured runtime', () => {
-    process.env.NEXT_PUBLIC_PRO_WORKBENCH_ENABLED = 'true';
-    process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = 'true';
-    process.env.DATABASE_URL = 'postgres://runtime';
+  it('requires the requested course to match the draft grant', async () => {
+    mocks.getServerOpenMaicCapabilities.mockResolvedValue({
+      databaseReady: true,
+      grants: [
+        {
+          stageId: 'course-a',
+          stage: 'draft',
+          documentWrite: true,
+          agentRead: true,
+          modelInvoke: true,
+        },
+      ],
+    });
 
-    expect(isWorkbenchEntryEnabled()).toBe(true);
+    await expect(isWorkbenchEntryEnabled('course-b')).resolves.toBe(false);
+    await expect(isWorkbenchEntryEnabled('course-a')).resolves.toBe(true);
+  });
+
+  it('does not accept a published or read-only grant', async () => {
+    mocks.getServerOpenMaicCapabilities.mockResolvedValue({
+      databaseReady: true,
+      grants: [
+        {
+          stage: 'published',
+          documentWrite: false,
+          agentRead: true,
+          modelInvoke: true,
+        },
+      ],
+    });
+
+    await expect(isWorkbenchEntryEnabled()).resolves.toBe(false);
   });
 });

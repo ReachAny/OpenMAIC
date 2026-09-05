@@ -1,13 +1,10 @@
 import { type NextRequest } from 'next/server';
 import { randomUUID } from 'crypto';
 import { apiSuccess, apiError, API_ERROR_CODES } from '@/lib/server/api-response';
-import {
-  buildRequestOrigin,
-  isValidClassroomId,
-  persistClassroom,
-  readClassroom,
-} from '@/lib/server/classroom-storage';
+import { buildRequestOrigin, isValidClassroomId } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
+import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 
 const log = createLogger('Classroom API');
 
@@ -29,11 +26,15 @@ export async function POST(request: NextRequest) {
     }
 
     const id = stage.id || randomUUID();
+    const auth = await requireOpenMaicRoute(request, { stageId: id, allowAnyStageGrant: false });
+    if ('response' in auth) return auth.response;
     const baseUrl = buildRequestOrigin(request);
 
-    const persisted = await persistClassroom({ id, stage: { ...stage, id }, scenes }, baseUrl);
+    const ownerStore = await getOwnerScopedDocumentStore(auth.authorization.principal);
+    const persistedStage = { ...stage, id };
+    await ownerStore.saveDocument({ stage: persistedStage, scenes });
 
-    return apiSuccess({ id: persisted.id, url: persisted.url }, 201);
+    return apiSuccess({ id, url: `${baseUrl}/classroom/${id}` }, 201);
   } catch (error) {
     log.error(
       `Classroom storage failed [stageId=${stageId ?? 'unknown'}, scenes=${sceneCount ?? 0}]:`,
@@ -64,7 +65,13 @@ export async function GET(request: NextRequest) {
       return apiError(API_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid classroom id');
     }
 
-    const classroom = await readClassroom(id);
+    const auth = await requireOpenMaicRoute(request, { stageId: id, allowAnyStageGrant: false });
+    if ('response' in auth) return auth.response;
+    const ownerStore = await getOwnerScopedDocumentStore(auth.authorization.principal);
+    const document = await ownerStore.loadDocument(id);
+    const classroom = document
+      ? { id, stage: document.stage, scenes: document.scenes, createdAt: new Date().toISOString() }
+      : null;
     if (!classroom) {
       return apiError(API_ERROR_CODES.INVALID_REQUEST, 404, 'Classroom not found');
     }

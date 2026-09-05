@@ -223,6 +223,13 @@ export interface SettingsState {
   // Auto-config lifecycle flag (persisted)
   autoConfigApplied: boolean;
 
+  /** ReachAcademy server owns the provider/capability catalog. */
+  managedOnly: boolean;
+  /** False until the server catalog has been loaded successfully. */
+  serverCatalogLoaded: boolean;
+  /** True when the latest server catalog request failed; keep the UI fail-closed. */
+  serverCatalogError: boolean;
+
   // Playback controls
   ttsMuted: boolean;
   ttsVolume: number; // 0-1, actual volume level
@@ -485,6 +492,7 @@ const getDefaultAudioConfig = () => ({
     // configured (API key or server-managed), so "enabled" is a user opt-OUT,
     // not the visibility gate. A server-configured provider must not be hidden
     // by a stale default (#665).
+    'reachany-tts': { apiKey: '', baseUrl: '', modelId: 'tts-1', enabled: true },
     'openai-tts': { apiKey: '', baseUrl: '', enabled: true },
     'azure-tts': { apiKey: '', baseUrl: '', enabled: true },
     'glm-tts': { apiKey: '', baseUrl: '', enabled: true },
@@ -530,6 +538,7 @@ const getDefaultPDFConfig = () => ({
     mineru: { apiKey: '', baseUrl: '', enabled: false },
     'mineru-cloud': { apiKey: '', baseUrl: '', enabled: false },
     alidocmind: { apiKey: '', baseUrl: '', enabled: false, accessKeyId: '', accessKeySecret: '' },
+    reachany: { apiKey: '', baseUrl: '', enabled: true },
   } as Record<
     PDFProviderId,
     {
@@ -604,6 +613,7 @@ const getDefaultWebSearchConfig = () => ({
       enabled: true,
       requiresApiKey: true,
     },
+    reachany: { apiKey: '', baseUrl: '', enabled: true, requiresApiKey: true },
     searxng: {
       apiKey: '',
       baseUrl: '',
@@ -873,6 +883,57 @@ function stripLegacyServerBaseUrl(state: Partial<SettingsState>): void {
   }
 }
 
+function clearServerCatalogState(state: SettingsState): Partial<SettingsState> {
+  return {
+    providersConfig: Object.fromEntries(
+      Object.entries(state.providersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverModels: undefined },
+      ]),
+    ) as ProvidersConfig,
+    ttsProvidersConfig: Object.fromEntries(
+      Object.entries(state.ttsProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverDisabled: false },
+      ]),
+    ) as SettingsState['ttsProvidersConfig'],
+    asrProvidersConfig: Object.fromEntries(
+      Object.entries(state.asrProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverDisabled: false },
+      ]),
+    ) as SettingsState['asrProvidersConfig'],
+    pdfProvidersConfig: Object.fromEntries(
+      Object.entries(state.pdfProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false },
+      ]),
+    ) as SettingsState['pdfProvidersConfig'],
+    imageProvidersConfig: Object.fromEntries(
+      Object.entries(state.imageProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverDisabled: false },
+      ]),
+    ) as SettingsState['imageProvidersConfig'],
+    videoProvidersConfig: Object.fromEntries(
+      Object.entries(state.videoProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverDisabled: false },
+      ]),
+    ) as SettingsState['videoProvidersConfig'],
+    webSearchProvidersConfig: Object.fromEntries(
+      Object.entries(state.webSearchProvidersConfig).map(([id, config]) => [
+        id,
+        { ...config, isServerConfigured: false, serverDisabled: false },
+      ]),
+    ) as SettingsState['webSearchProvidersConfig'],
+    managedOnly: false,
+    serverCatalogLoaded: false,
+    serverCatalogError: false,
+    parallelSceneConcurrency: 0,
+  };
+}
+
 export const useSettingsStore = create<SettingsState>()(
   persist(
     (set, get) => {
@@ -937,6 +998,9 @@ export const useSettingsStore = create<SettingsState>()(
         parallelSceneConcurrency: 0,
 
         autoConfigApplied: false,
+        managedOnly: false,
+        serverCatalogLoaded: false,
+        serverCatalogError: false,
 
         // Web Search settings (use defaults)
         ...defaultWebSearchConfig,
@@ -1397,21 +1461,81 @@ export const useSettingsStore = create<SettingsState>()(
 
         // Fetch server-configured providers and merge into local state
         fetchServerProviders: async () => {
+          // The persisted catalog is only a cache of the current grant. Hide
+          // it immediately while revalidating so an expired tab cannot render
+          // stale providers during the request window.
+          set((state) => ({ ...clearServerCatalogState(state), serverCatalogError: false }));
           try {
             const res = await fetch('/api/server-providers');
-            if (!res.ok) return;
+            if (!res.ok) {
+              // Never keep a previously successful server catalog visible when
+              // the current request is unauthorized/unavailable. The store is
+              // persisted, so stale `isServerConfigured` flags would otherwise
+              // make the settings UI fall back to the built-in provider list
+              // during a 401/403 or transient network failure.
+              set((state) => ({
+                providersConfig: Object.fromEntries(
+                  Object.entries(state.providersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverModels: undefined },
+                  ]),
+                ) as ProvidersConfig,
+                ttsProvidersConfig: Object.fromEntries(
+                  Object.entries(state.ttsProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverDisabled: false },
+                  ]),
+                ) as typeof state.ttsProvidersConfig,
+                asrProvidersConfig: Object.fromEntries(
+                  Object.entries(state.asrProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverDisabled: false },
+                  ]),
+                ) as typeof state.asrProvidersConfig,
+                pdfProvidersConfig: Object.fromEntries(
+                  Object.entries(state.pdfProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false },
+                  ]),
+                ) as typeof state.pdfProvidersConfig,
+                imageProvidersConfig: Object.fromEntries(
+                  Object.entries(state.imageProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverDisabled: false },
+                  ]),
+                ) as typeof state.imageProvidersConfig,
+                videoProvidersConfig: Object.fromEntries(
+                  Object.entries(state.videoProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverDisabled: false },
+                  ]),
+                ) as typeof state.videoProvidersConfig,
+                webSearchProvidersConfig: Object.fromEntries(
+                  Object.entries(state.webSearchProvidersConfig).map(([id, config]) => [
+                    id,
+                    { ...config, isServerConfigured: false, serverDisabled: false },
+                  ]),
+                ) as typeof state.webSearchProvidersConfig,
+                managedOnly: false,
+                serverCatalogLoaded: false,
+                serverCatalogError: true,
+                parallelSceneConcurrency: 0,
+              }));
+              return;
+            }
             // Managed providers expose only their allowed model list (LLM/image)
             // and presence (the "managed" flag) — never a base URL. Every
             // capability section carries an optional `disabled` flag for
             // admin/server-level force-off (#665).
             const data = (await res.json()) as {
               providers: Record<string, { models?: string[] }>;
-              tts: Record<string, { disabled?: boolean }>;
-              asr: Record<string, { disabled?: boolean }>;
+              tts: Record<string, { models?: string[]; disabled?: boolean }>;
+              asr: Record<string, { models?: string[]; disabled?: boolean }>;
               pdf: Record<string, Record<string, never>>;
               image: Record<string, { models?: string[]; disabled?: boolean }>;
-              video: Record<string, { disabled?: boolean }>;
+              video: Record<string, { models?: string[]; disabled?: boolean }>;
               webSearch: Record<string, { disabled?: boolean }>;
+              managedOnly?: boolean;
               generation?: { parallelSceneConcurrency?: number };
             };
 
@@ -1488,6 +1612,12 @@ export const useSettingsStore = create<SettingsState>()(
                     ...newTTSConfig[key],
                     isServerConfigured: !info.disabled,
                     serverDisabled: info.disabled === true,
+                    ...(info.models?.length
+                      ? {
+                          customModels: info.models.map((id) => ({ id, name: id })),
+                          modelId: info.models[0],
+                        }
+                      : {}),
                   };
                 }
               }
@@ -1513,6 +1643,12 @@ export const useSettingsStore = create<SettingsState>()(
                     ...newASRConfig[key],
                     isServerConfigured: !info.disabled,
                     serverDisabled: info.disabled === true,
+                    ...(info.models?.length
+                      ? {
+                          customModels: info.models.map((id) => ({ id, name: id })),
+                          modelId: info.models[0],
+                        }
+                      : {}),
                   };
                 }
               }
@@ -1559,6 +1695,12 @@ export const useSettingsStore = create<SettingsState>()(
                     ...newImageConfig[key],
                     isServerConfigured: !info.disabled,
                     serverDisabled: info.disabled === true,
+                    ...(info.models?.length
+                      ? {
+                          customModels: info.models.map((id) => ({ id, name: id })),
+                          replaceBuiltInModels: true,
+                        }
+                      : {}),
                   };
                 }
               }
@@ -1585,6 +1727,12 @@ export const useSettingsStore = create<SettingsState>()(
                       ...newVideoConfig[key],
                       isServerConfigured: !info.disabled,
                       serverDisabled: info.disabled === true,
+                      ...(info.models?.length
+                        ? {
+                            customModels: info.models.map((id) => ({ id, name: id })),
+                            replaceBuiltInModels: true,
+                          }
+                        : {}),
                     };
                   }
                 }
@@ -1841,6 +1989,9 @@ export const useSettingsStore = create<SettingsState>()(
                   Math.floor(data.generation?.parallelSceneConcurrency ?? 0),
                 ),
                 autoConfigApplied: true,
+                managedOnly: data.managedOnly === true,
+                serverCatalogLoaded: true,
+                serverCatalogError: false,
                 // Validated selections
                 ...(validLLMProvider !== state.providerId && {
                   providerId: validLLMProvider as ProviderId,
@@ -1900,7 +2051,13 @@ export const useSettingsStore = create<SettingsState>()(
               };
             });
           } catch (e) {
-            // Silently fail — server providers are optional
+            // Keep the fail-closed invariant on network failures too. A stale
+            // persisted server catalog must never become a client-side escape
+            // hatch while the authoritative endpoint is unavailable.
+            set((state) => ({
+              ...clearServerCatalogState(state),
+              serverCatalogError: true,
+            }));
             log.warn('Failed to fetch server providers:', e);
           }
         },
@@ -2037,6 +2194,15 @@ export const useSettingsStore = create<SettingsState>()(
         if ((state as Record<string, unknown>).autoConfigApplied === undefined) {
           (state as Record<string, unknown>).autoConfigApplied = true;
         }
+        if ((state as Record<string, unknown>).managedOnly === undefined) {
+          (state as Record<string, unknown>).managedOnly = false;
+        }
+        if ((state as Record<string, unknown>).serverCatalogLoaded === undefined) {
+          (state as Record<string, unknown>).serverCatalogLoaded = false;
+        }
+        if ((state as Record<string, unknown>).serverCatalogError === undefined) {
+          (state as Record<string, unknown>).serverCatalogError = false;
+        }
 
         if ((state as Record<string, unknown>).agentMode === undefined) {
           (state as Record<string, unknown>).agentMode = 'preset';
@@ -2147,6 +2313,15 @@ export const useSettingsStore = create<SettingsState>()(
         ensureValidProviderSelections(merged as Partial<SettingsState>);
         stripLegacyServerBaseUrl(merged as Partial<SettingsState>);
         const typedMerged = merged as Partial<SettingsState>;
+        if (typedMerged.serverCatalogError === undefined) typedMerged.serverCatalogError = false;
+        // Persisted server flags are only valid for the current runtime
+        // session. During the initial rehydrate the authoritative catalog has
+        // not been fetched yet, so discard any stale flags from an earlier
+        // session before the UI renders. The mount-time server sync will
+        // repopulate them after a successful authorized response.
+        if (!currentState.serverCatalogLoaded && persisted.serverCatalogLoaded === true) {
+          Object.assign(merged, clearServerCatalogState(merged as SettingsState));
+        }
         typedMerged.thinkingConfigs = pruneThinkingConfigs(
           typedMerged.thinkingConfigs,
           typedMerged.providersConfig,

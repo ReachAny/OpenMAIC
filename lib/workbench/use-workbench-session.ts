@@ -144,8 +144,10 @@ export function useWorkbenchStream(sessionId: string | null): void {
     // Read the resume point imperatively: subscribing to `lastEventId` would
     // re-run this effect on every event and reconnect in a loop.
     const from = useWorkbenchStore.getState().lastEventId;
+    const stageId = useWorkbenchStore.getState().stageId;
+    const stageQuery = stageId ? `&stageId=${encodeURIComponent(stageId)}` : '';
     const source = new EventSource(
-      `/api/agent/sessions/${encodeURIComponent(sessionId)}/events?lastEventId=${from}`,
+      `/api/agent/sessions/${encodeURIComponent(sessionId)}/events?lastEventId=${from}${stageQuery}`,
     );
 
     let connected = false;

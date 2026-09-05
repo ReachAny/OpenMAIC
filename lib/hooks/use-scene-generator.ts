@@ -2,6 +2,7 @@
 
 import { useCallback, useRef } from 'react';
 import { useStageStore } from '@/lib/store/stage';
+import { activeStageHeaders } from '@/lib/persistence/active-stage';
 import { isSceneEditLocked } from '@/lib/edit/regen-lock';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -75,6 +76,12 @@ function getApiHeaders(): HeadersInit {
   const videoProviderConfig = settings.videoProvidersConfig?.[settings.videoProviderId];
 
   return {
+    // Bind generation to THIS stage's grant. Without the header the bridge
+    // guard falls back to `allowAnyStageGrant` and picks the most recently
+    // issued grant, so a browser session holding two courses can write the
+    // generated media under the other course's principal — which only
+    // surfaces much later, as a missing asset at publication time.
+    ...activeStageHeaders(),
     'Content-Type': 'application/json',
     'x-model': config.modelString || '',
     'x-api-key': config.apiKey || '',

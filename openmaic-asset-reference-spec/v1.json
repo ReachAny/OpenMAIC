@@ -1,0 +1,70 @@
+{
+  "version": "openmaic-asset-reference-spec/v1",
+  "documentVersion": "0.2.0",
+  "slotKinds": ["value", "key-set"],
+  "refTypes": ["asset-id", "legacy-classroom-media", "provider-url"],
+  "slideRoles": [
+    {
+      "role": "background-image",
+      "containerPath": ["background", "image"],
+      "discriminator": { "path": ["background", "type"], "equals": "image", "scope": "root" },
+      "slot": { "kind": "value", "property": "src" }
+    },
+    {
+      "role": "image-src",
+      "containerPath": ["elements", "*"],
+      "discriminator": { "path": ["type"], "equals": "image" },
+      "slot": { "kind": "value", "property": "src" }
+    },
+    {
+      "role": "audio-src",
+      "containerPath": ["elements", "*"],
+      "discriminator": { "path": ["type"], "equals": "audio" },
+      "slot": { "kind": "value", "property": "src" }
+    },
+    {
+      "role": "video-src",
+      "containerPath": ["elements", "*"],
+      "discriminator": { "path": ["type"], "equals": "video" },
+      "slot": { "kind": "value", "property": "src" }
+    },
+    {
+      "role": "video-media-ref",
+      "containerPath": ["elements", "*"],
+      "discriminator": { "path": ["type"], "equals": "video" },
+      "slot": { "kind": "value", "property": "mediaRef" }
+    },
+    {
+      "role": "video-poster",
+      "containerPath": ["elements", "*"],
+      "discriminator": { "path": ["type"], "equals": "video" },
+      "slot": { "kind": "value", "property": "poster" }
+    }
+  ],
+  "containers": [
+    { "role": "stage-whiteboard", "path": ["stage", "whiteboard", "*"], "kind": "slide" },
+    {
+      "role": "scene-canvas",
+      "path": ["scenes", "*", "content"],
+      "discriminator": { "path": ["type"], "equals": "slide" },
+      "childPath": ["canvas"],
+      "kind": "slide"
+    },
+    { "role": "scene-whiteboard", "path": ["scenes", "*", "whiteboards", "*"], "kind": "slide" },
+    {
+      "role": "speech-audio-id",
+      "path": ["scenes", "*", "actions", "*"],
+      "discriminator": { "path": ["type"], "equals": "speech" },
+      "kind": "value",
+      "property": "audioId"
+    },
+    {
+      "role": "speech-audio-url",
+      "path": ["scenes", "*", "actions", "*"],
+      "discriminator": { "path": ["type"], "equals": "speech" },
+      "kind": "value",
+      "property": "audioUrl"
+    },
+    { "role": "stage-video-manifest", "path": ["stage", "videoManifest"], "kind": "key-set" }
+  ]
+}

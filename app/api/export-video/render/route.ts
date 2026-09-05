@@ -4,6 +4,8 @@ import { proxyFetch } from '@/lib/server/proxy-fetch';
 import { resolveRenderServiceUrl } from '@/lib/server/render-service';
 import { capBodyStream } from '@/lib/server/capped-stream';
 import { createLogger } from '@/lib/logger';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 
 const log = createLogger('ExportVideo Render API');
 
@@ -44,6 +46,8 @@ function clientIdentity(req: NextRequest): string {
  * can degrade to a local ZIP download.
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   const resolved = resolveRenderServiceUrl();
   if ('error' in resolved) {
     return apiError('PROVIDER_DISABLED', 501, 'Render service is not configured');
@@ -96,6 +100,16 @@ export async function POST(req: NextRequest) {
       return apiError(code, status, 'Render service rejected the request', detail);
     }
 
+    if (typeof data.jobId !== 'string' || !data.jobId) {
+      return apiError('UPSTREAM_ERROR', 502, 'Render service returned no job id');
+    }
+    await createOpenMaicJobAuthorizationManager().create({
+      sessionId: auth.authorization.sessionId,
+      stageId: auth.authorization.grant.stageId,
+      jobKind: 'export',
+      jobId: data.jobId,
+      jobProfile: 'teacher.video-export',
+    });
     return apiSuccess({ jobId: data.jobId, pollIntervalMs: 3000 }, 202);
   } catch (error) {
     // A cap trip aborts the forwarded stream, surfacing here as a fetch error.

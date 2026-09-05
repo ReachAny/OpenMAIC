@@ -87,7 +87,11 @@ After the core LLM key is configured, ask the user if they want to enable option
 
 ### 4. Start And Verify OpenMAIC
 
-After the user has chosen a startup mode and configured keys, start OpenMAIC using the chosen method, then verify the service with `GET {url}/api/health`.
+In ReachAcademy mode, start OpenMAIC through the host-side workflow described by
+`.agents/skills/reachacademy-dev/SKILL.md`; do not start Docker or configure browser
+persistence tokens. Verify `GET {url}/api/health` for liveness and `GET {url}/api/ready`
+for catalog/Redis/import readiness. A 503 from `/api/ready` is expected until the fixed
+`data/migration/openmaic-v1-import-evidence.json` is produced by an authorized migration.
 
 ### 5. Generate A Classroom
 

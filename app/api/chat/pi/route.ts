@@ -25,8 +25,9 @@ import { apiError } from '@/lib/server/api-response';
 import type { ThinkingConfig } from '@/lib/types/provider';
 import type { StatelessChatRequest } from '@/lib/types/chat';
 import { resolveClassroomWebSearchConfig } from '@/lib/server/web-search-config';
-import { authenticatePersistenceHeaders } from '@/lib/persistence/server-auth';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+import { authorizeOpenMaicRequest } from '@/lib/reachacademy/bridge/guard';
 import { createWhiteboardRuntimeService } from '@/lib/whiteboard/runtime/store';
 import { hasNativeWhiteboardAction } from '@/lib/chat/pi/tools/native-whiteboard';
 
@@ -141,6 +142,23 @@ export async function POST(req: NextRequest) {
       requestStartStageId === requestStartStageId.trim()
         ? requestStartStageId
         : undefined;
+    if (!validRequestStartStageId) {
+      return apiError('INVALID_REQUEST', 400, 'A valid stage is required');
+    }
+    let bridgeAuthorization;
+    try {
+      bridgeAuthorization = await authorizeOpenMaicRequest(req, {
+        stageId: validRequestStartStageId,
+      });
+    } catch {
+      return apiError('INVALID_CREDENTIALS', 401, 'Request denied');
+    }
+    const grantExpiryTimer = setTimeout(
+      () => {
+        abortController.abort(new Error('authorization_expired'));
+      },
+      Math.max(0, bridgeAuthorization.grant.expiresAt - Date.now()),
+    );
     const nativeWhiteboardRequested = agentConfigs.some((agent) =>
       hasNativeWhiteboardAction(agent.allowedActions),
     );
@@ -150,16 +168,15 @@ export async function POST(req: NextRequest) {
       childRuntimeMode === 'native' &&
       enableWhiteboardTools &&
       nativeWhiteboardRequested &&
-      validRequestStartStageId &&
       process.env.NEXT_PUBLIC_PERSISTENCE === '1' &&
-      process.env.DATABASE_URL &&
-      process.env.PERSISTENCE_DEV_TOKEN
+      process.env.DATABASE_URL
     ) {
-      const principal = authenticatePersistenceHeaders(req.headers);
-      const learnerKey = principal?.learnerKey;
+      const learnerKey = bridgeAuthorization.grant.learnerKey;
       if (learnerKey && learnerKey === learnerKey.trim()) {
         try {
-          const provider = await getServerPersistenceProvider(process.env.DATABASE_URL);
+          const provider = await getServerPersistenceProvider(
+            stageConnectionString(process.env.DATABASE_URL, bridgeAuthorization.grant.stage),
+          );
           nativeWhiteboardLearnerKey = learnerKey;
           nativeWhiteboardService = createWhiteboardRuntimeService({
             store: provider.runtimeStore,
@@ -241,16 +258,24 @@ export async function POST(req: NextRequest) {
         }
 
         stopHeartbeat();
+        clearTimeout(grantExpiryTimer);
         await writer.close();
       } catch (error) {
         stopHeartbeat();
 
         if (signal.aborted) {
           try {
+            if (
+              abortController.signal.reason instanceof Error &&
+              abortController.signal.reason.message === 'authorization_expired'
+            ) {
+              await send({ type: 'error', data: { message: 'authorization_expired' } });
+            }
             await writer.close();
           } catch {
             /* already closed */
           }
+          clearTimeout(grantExpiryTimer);
           return;
         }
 
@@ -264,6 +289,7 @@ export async function POST(req: NextRequest) {
         } catch {
           /* writer may already be closed */
         }
+        clearTimeout(grantExpiryTimer);
       }
     })();
 

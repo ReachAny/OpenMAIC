@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect, useMemo, useRef, useDeferredValue } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowUp,
@@ -27,6 +27,8 @@ import {
   X,
   Presentation,
   Loader2,
+  AlertTriangle,
+  ArrowLeft,
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { LanguageSwitcher } from '@/components/language-switcher';
@@ -82,11 +84,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDraftCache } from '@/lib/hooks/use-draft-cache';
 import { SpeechButton } from '@/components/audio/speech-button';
 import { useImportClassroom } from '@/lib/import/use-import-classroom';
-import {
-  isProWorkbenchEnabled,
-  isPptxImportEnabled,
-  shouldShowVocationalTestUi,
-} from '@/lib/config/feature-flags';
+import { isPptxImportEnabled, shouldShowVocationalTestUi } from '@/lib/config/feature-flags';
+import { useOpenMaicCapabilities } from '@/lib/reachacademy/bridge/client-capabilities';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
 import { useImportPptx } from '@/lib/import/use-import-pptx';
 import { InteractiveModeButton } from '@/components/generation/interactive-mode-button';
 import { ProBadge } from '@/components/workbench/ProBadge';
@@ -95,6 +95,11 @@ import {
   readLastWorkspaceSessionId,
   workspaceResumeHref,
 } from '@/lib/workbench/workspace-session-memory';
+import {
+  hrefWithWorkspaceContext,
+  readWorkspaceContext,
+  workspaceHrefWithContext,
+} from '@/lib/workbench/workspace-panes';
 
 const log = createLogger('Home');
 
@@ -106,9 +111,6 @@ const INTERACTIVE_MODE_STORAGE_KEY = 'interactiveModeEnabled';
 // yet, so the flow only logs the parsed slides. Hide the entry point behind a
 // flag until it's wired end-to-end, so the UI doesn't expose a no-op button.
 const PPTX_IMPORT_ENABLED = isPptxImportEnabled();
-
-/** The configured runtime probe result, retained across client navigations. */
-let workbenchRuntimeCache: boolean | null = null;
 
 interface FormState {
   courseMaterials: SelectedCourseMaterial[];
@@ -134,30 +136,26 @@ function HomePage() {
   // carried the lockup and composer into place.
   const [swapped] = useState(arrivedByProSwap);
   const heroEnter = (from: Record<string, number>) => (swapped ? false : from);
+  const searchParams = useSearchParams();
   const showVocationalTestUi = shouldShowVocationalTestUi();
-  const workbenchBuildEnabled = isProWorkbenchEnabled();
-  const [workbenchRuntimeEnabled, setWorkbenchRuntimeEnabled] = useState(
-    workbenchRuntimeCache === true,
-  );
-  useEffect(() => {
-    if (!workbenchBuildEnabled || workbenchRuntimeCache !== null) return;
-    let cancelled = false;
-    fetch('/api/agent/runtime')
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body) => {
-        workbenchRuntimeCache = body?.enabled === true;
-        if (!cancelled) setWorkbenchRuntimeEnabled(workbenchRuntimeCache);
-      })
-      .catch(() => {
-        // A failed probe keeps the entry hidden and allows a later visit to retry.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workbenchBuildEnabled]);
-  const workbenchEntryEnabled = workbenchBuildEnabled && workbenchRuntimeEnabled;
+  const bridgeCapabilities = useOpenMaicCapabilities(searchParams.get('stageId'));
+  const workbenchBuildEnabled =
+    bridgeCapabilities?.documentWrite === true &&
+    bridgeCapabilities.agentRead &&
+    bridgeCapabilities.modelInvoke;
+  const workbenchEntryEnabled = workbenchBuildEnabled;
+  // Resolved from the launch query rather than the stage store: a course launched here has no
+  // document yet, which is exactly why the teacher was sent to this page.
+  const hostReturnUrl = useOpenMaicHostReturnUrl(searchParams.get('stageId'));
   const enterWorkbench = () => {
-    const href = workspaceResumeHref(readLastWorkspaceSessionId());
+    const stageId = searchParams.get('stageId');
+    const context = readWorkspaceContext(searchParams);
+    const href = stageId
+      ? workspaceHrefWithContext(
+          { sessionId: null, courseId: stageId },
+          { stageId: context.stageId ?? stageId, mode: context.mode ?? 'edit' },
+        )
+      : workspaceResumeHref(readLastWorkspaceSessionId());
     startProSwap(href, (next) => router.push(next));
   };
   useEffect(() => {
@@ -350,6 +348,18 @@ function HomePage() {
       thumbnailsRef.current = {};
     };
   }, []);
+
+  // A teacher launch for an existing module is an edit deep link. The home composer is only
+  // useful for an empty/new module; once the stage already has scenes, take the user straight to
+  // the classroom editor instead of making them click through the OpenMAIC home page again.
+  useEffect(() => {
+    const stageId = searchParams.get('stageId');
+    if (!hydrated || !stageId || searchParams.get('mode') !== 'edit') return;
+    const stage = classrooms.find((item) => item.id === stageId);
+    if (!stage || stage.sceneCount <= 0) return;
+    const params = new URLSearchParams({ stageId, mode: 'edit' });
+    router.replace(`/classroom/${encodeURIComponent(stageId)}?${params.toString()}`);
+  }, [classrooms, hydrated, router, searchParams]);
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -654,6 +664,7 @@ function HomePage() {
 
       const sessionState = {
         sessionId: nanoid(),
+        requestedStageId: searchParams.get('stageId') ?? undefined,
         requirements,
         pdfText: '',
         pdfImages: [],
@@ -670,7 +681,15 @@ function HomePage() {
       };
       sessionStorage.setItem('generationSession', JSON.stringify(sessionState));
 
-      router.push('/generation-preview');
+      // Carry the launch context in the URL, not just in sessionStorage.
+      // Stage-scoped requests derive `x-openmaic-stage-id` from
+      // `window.location` (see `lib/persistence/active-stage.ts`), so a bare
+      // `/generation-preview` leaves the generation flow with no stage
+      // context: the document write that ends generation fails closed with
+      // OPENMAIC_STAGE_REQUIRED and the deck never reaches `openmaic_draft`.
+      router.push(
+        hrefWithWorkspaceContext('/generation-preview', readWorkspaceContext(searchParams)),
+      );
     } catch (err) {
       log.error('Error preparing generation:', err);
       setError(err instanceof Error ? err.message : t('upload.generateFailed'));
@@ -720,6 +739,20 @@ function HomePage() {
           className="hidden"
         />
       )}
+      {/* A course launched from ReachAcademy lands here with no body yet, and this deck list is
+          not the teacher's own — without this there is no way back to the course they came from.
+          Renders nothing in a standalone deployment. */}
+      {hostReturnUrl ? (
+        <button
+          className="fixed top-4 left-4 z-50 flex items-center gap-1.5 rounded-full border border-gray-100/50 bg-white/60 px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm backdrop-blur-md transition-colors hover:text-gray-900 dark:border-gray-700/50 dark:bg-gray-800/60 dark:text-gray-300 dark:hover:text-gray-100"
+          onClick={() => globalThis.location.assign(hostReturnUrl)}
+          type="button"
+        >
+          <ArrowLeft className="size-3.5" />
+          {t('workbench.launch.openMaicBack')}
+        </button>
+      ) : null}
+
       {/* ═══ Top-right pill (unchanged) ═══ */}
       <div
         ref={toolbarRef}
@@ -1892,5 +1925,80 @@ function ClassroomCard({
 }
 
 export default function Page() {
+  return (
+    <Suspense fallback={<LaunchLoadingFallback />}>
+      <OpenMaicLaunchGate />
+    </Suspense>
+  );
+}
+
+function LaunchLoadingFallback() {
+  const { t } = useI18n();
+  return (
+    <main className="flex min-h-screen w-full items-center justify-center bg-background">
+      <Loader2
+        className="size-7 animate-spin text-muted-foreground motion-reduce:animate-none"
+        aria-label={t('workbench.common.loading')}
+      />
+    </main>
+  );
+}
+
+/**
+ * Deep links from Teacher carry a stage-bound draft grant. The old home page
+ * rendered normally when that grant was missing, which made an expired or
+ * rejected launch look like a successful navigation (and in some cases a
+ * blank page). Keep the normal home route untouched, but fail visibly for the
+ * launch-only query shape.
+ */
+function OpenMaicLaunchGate() {
+  const searchParams = useSearchParams();
+  const stageId = searchParams.get('stageId');
+  const mode = searchParams.get('mode');
+  const grant = useOpenMaicCapabilities(stageId);
+  const isDraftEdit = Boolean(stageId && mode === 'edit');
+  const authorized =
+    grant?.stage === 'draft' && grant.documentWrite && grant.agentRead && grant.modelInvoke;
+
+  if (!authorized || !isDraftEdit) return <OpenMaicLaunchFailure />;
   return <HomePage />;
+}
+
+function OpenMaicLaunchFailure() {
+  const { t } = useI18n();
+  return (
+    <main className="flex min-h-screen w-full items-center justify-center bg-background px-6">
+      <section
+        role="alert"
+        className="flex w-full max-w-lg flex-col items-center gap-4 rounded-2xl border border-border/70 bg-card p-8 text-center shadow-lg"
+      >
+        <AlertTriangle className="size-10 text-destructive" aria-hidden="true" />
+        <h1 className="text-xl font-semibold text-foreground">
+          {t('workbench.launch.openMaicDeniedTitle')}
+        </h1>
+        <p className="text-sm leading-6 text-muted-foreground">
+          {t('workbench.launch.openMaicDeniedDescription')}
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <button
+            type="button"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            onClick={() => window.location.reload()}
+          >
+            {t('workbench.launch.openMaicRetry')}
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+            onClick={() => {
+              if (window.history.length > 1) window.history.back();
+              else window.location.assign('/');
+            }}
+          >
+            {t('workbench.launch.openMaicBack')}
+          </button>
+        </div>
+      </section>
+    </main>
+  );
 }

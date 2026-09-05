@@ -9,6 +9,7 @@ import { NextRequest } from 'next/server';
 import { callLLM } from '@/lib/ai/llm';
 import { formatSearchResultsAsContext, searchWeb } from '@/lib/web-search';
 import {
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveServerWebSearchProviderId,
@@ -26,10 +27,13 @@ import type { AICallFn } from '@openmaic/generation';
 import { WEB_SEARCH_PROVIDERS } from '@/lib/web-search/constants';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
 import { resolveWebSearchRouteBaseUrl } from '@/lib/server/web-search-config';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('WebSearch');
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let query: string | undefined;
   try {
     const body = await req.json();
@@ -61,6 +65,7 @@ export async function POST(req: NextRequest) {
       requestProviderId && WEB_SEARCH_PROVIDERS[requestProviderId]
         ? requestProviderId
         : (serverProviderId ?? 'tavily');
+    assertReachAnyProviderAllowed('webSearch', providerId);
 
     // Prefer the operator's server-configured backend over stale client defaults
     // (e.g. Tavily without a key, or Brave HTML scrape with empty results).
@@ -182,6 +187,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     log.error(`Web search failed [query="${query?.substring(0, 60) ?? 'unknown'}"]:`, err);
     const message = err instanceof Error ? err.message : 'Web search failed';
+    if (message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, message);
+    }
     return apiError('INTERNAL_ERROR', 500, message);
   }
 }

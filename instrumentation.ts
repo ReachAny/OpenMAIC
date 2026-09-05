@@ -15,6 +15,9 @@ export async function register(): Promise<void> {
   // want; the persistence stack is Node-only.
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
+  const { initializeOpenMaicDatabaseUrl } = await import('@/lib/config/database-url');
+  initializeOpenMaicDatabaseUrl();
+
   // Imported dynamically so the Edge bundle never pulls in `pg`.
   const { startAssetCollectorSchedule } =
     await import('@/lib/persistence/asset-collector-schedule');
@@ -79,13 +82,11 @@ export async function register(): Promise<void> {
       } catch (error) {
         console.error('[instrumentation] Asset collector drain failed', error);
       }
-      const connectionString = process.env.DATABASE_URL?.trim();
-      if (connectionString) {
+      if (process.env.DATABASE_URL?.trim()) {
         try {
-          const { getServerPersistenceProvider } =
+          const { closeServerPersistenceProviders } =
             await import('@/lib/persistence/server-provider');
-          const { pool } = await getServerPersistenceProvider(connectionString);
-          await pool.end();
+          await closeServerPersistenceProviders();
         } catch (error) {
           console.error('[instrumentation] Persistence pool shutdown failed', error);
         }

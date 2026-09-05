@@ -3,9 +3,12 @@ import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { resolveModel } from '@/lib/server/resolve-model';
 import { callLLM } from '@/lib/ai/llm';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 const log = createLogger('Verify Model');
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let model: string | undefined;
   try {
     const body = await req.json();

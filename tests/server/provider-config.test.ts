@@ -100,6 +100,7 @@ describe('provider-config', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     clearProviderEnv();
     yamlOverride = null;
   });
@@ -1076,6 +1077,52 @@ video:
         await import('@/lib/server/provider-config');
       expect(isServerConfiguredProvider('pdf', 'alidocmind')).toBe(false);
       expect(resolveManagedAliDocMindCredentials()).toBeUndefined();
+    });
+  });
+
+  describe('ReachAny managed model catalog enforcement', () => {
+    function enableManagedMode() {
+      vi.stubEnv('REACHANY_MODEL_BASE_URL', 'https://model-service.example.test');
+      vi.stubEnv('REACHANY_OPENMAIC_SERVICE_TOKEN', 'managed-token');
+    }
+
+    it('fails closed when the catalog request fails', async () => {
+      enableManagedMode();
+      vi.stubEnv('OPENROUTER_API_KEY', 'server-key');
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('gateway down')));
+      const { assertReachAnyManagedModelAllowed } = await import('@/lib/server/provider-config');
+
+      await expect(
+        assertReachAnyManagedModelAllowed('chat', 'providers', 'openrouter', 'model-a'),
+      ).rejects.toThrow('not enabled by the ReachAny model service');
+    });
+
+    it('rejects an unlisted model and accepts a catalog model', async () => {
+      enableManagedMode();
+      vi.stubEnv('OPENROUTER_API_KEY', 'server-key');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ data: [{ id: 'allowed-model' }] }),
+        }),
+      );
+      const { assertReachAnyManagedModelAllowed } = await import('@/lib/server/provider-config');
+
+      await expect(
+        assertReachAnyManagedModelAllowed('chat', 'providers', 'openrouter', 'allowed-model'),
+      ).resolves.toBeUndefined();
+      await expect(
+        assertReachAnyManagedModelAllowed('chat', 'providers', 'openrouter', 'blocked-model'),
+      ).rejects.toThrow('not enabled by the ReachAny model service');
+    });
+
+    it('rejects providers that are absent from the managed server catalog', async () => {
+      enableManagedMode();
+      const { assertReachAnyProviderAllowed } = await import('@/lib/server/provider-config');
+      expect(() => assertReachAnyProviderAllowed('providers', 'openai')).toThrow(
+        'not enabled by the ReachAny server',
+      );
     });
   });
 });

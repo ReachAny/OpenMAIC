@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 import {
   readUsageRecords,
   type UsageRecord,
@@ -69,6 +70,8 @@ function dayKey(createdAt: number): string {
  * day, and by modality. Pure usage — no cost. Optional `?months=YYYY-MM,...`.
  */
 export async function GET(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   try {
     const monthsParam = req.nextUrl.searchParams.get('months');
     const months = monthsParam ? monthsParam.split(',').map((s) => s.trim()) : undefined;

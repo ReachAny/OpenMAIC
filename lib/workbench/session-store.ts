@@ -669,6 +669,19 @@ function toolArgsOf(value: unknown): Record<string, unknown> | undefined {
  */
 const RESULT_TEXT_LIMIT = 20_000;
 
+/** Preserve useful diagnostics when the runner sends a structured error. */
+function formatSessionError(value: unknown): string {
+  if (value == null) return '';
+  if (value instanceof Error) return value.message.trim();
+  if (typeof value === 'string') return value.trim();
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' ? serialized.trim() : String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 function resultText(result: unknown): Pick<ChatNode, 'toolResultText' | 'toolResultTruncated'> {
   const parts = (result as { content?: { type?: string; text?: string }[] })?.content ?? [];
   const s = parts
@@ -1655,7 +1668,7 @@ export function foldEvent(state: WorkbenchFold, event: WorkbenchEvent): Workbenc
         // English error text used to be spliced into the middle of the
         // sentence, which read as a log line and — because every auto-retry
         // appends its own marker — stacked N identical copies of it.
-        const cause = data.error ? String(data.error).trim() : '';
+        const cause = formatSessionError(data.error);
         next.chat = [
           ...settled,
           {
@@ -1914,6 +1927,40 @@ export class WorkbenchApiError extends Error {
   }
 }
 
+type WorkbenchApiFailure = {
+  readonly error?: unknown;
+  readonly errorCode?: unknown;
+  readonly code?: unknown;
+  readonly message?: unknown;
+};
+
+/**
+ * ReachAcademy's authorization guard returns `{ error: { code, message } }`,
+ * while older workbench routes return flat `error` / `errorCode` fields. Keep
+ * both contracts readable at this client boundary; otherwise the nested object
+ * becomes the user-visible string "[object Object]".
+ */
+export function workbenchApiFailureDetails(body: WorkbenchApiFailure): {
+  readonly message: string | null;
+  readonly errorCode: string | undefined;
+} {
+  const nested =
+    typeof body.error === 'object' && body.error !== null
+      ? (body.error as { code?: unknown; message?: unknown })
+      : null;
+  const message = [
+    body.message,
+    typeof body.error === 'string' ? body.error : undefined,
+    nested?.message,
+  ]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?.trim();
+  const errorCode = [body.errorCode, body.code, nested?.code]
+    .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    ?.trim();
+  return { message: message ?? null, errorCode };
+}
+
 export async function createWorkbenchSession(input: {
   prompt: string;
   skill?: string;
@@ -1948,15 +1995,16 @@ export async function createWorkbenchSession(input: {
     status?: SessionStatus;
     prompt?: string;
     courseRefs?: CourseRef[];
-    error?: string;
-    errorCode?: string;
-    message?: string;
+    error?: unknown;
+    errorCode?: unknown;
+    message?: unknown;
   };
   if (!res.ok || !body.id || !body.stageId) {
+    const failure = workbenchApiFailureDetails(body);
     throw new WorkbenchApiError(
-      body.message ?? body.error ?? `POST /api/agent/sessions -> ${res.status}`,
+      failure.message ?? `POST /api/agent/sessions -> ${res.status}`,
       res.status,
-      body.errorCode,
+      failure.errorCode,
     );
   }
   return {
@@ -1991,15 +2039,17 @@ export async function renameWorkbenchSession(
   });
   const body = (await res.json().catch(() => ({}))) as {
     title?: string | null;
-    error?: string;
-    errorCode?: string;
-    message?: string;
+    error?: unknown;
+    errorCode?: unknown;
+    message?: unknown;
+    code?: unknown;
   };
   if (!res.ok) {
+    const failure = workbenchApiFailureDetails(body);
     throw new WorkbenchApiError(
-      body.message ?? body.error ?? `PATCH /api/agent/sessions -> ${res.status}`,
+      failure.message ?? `PATCH /api/agent/sessions -> ${res.status}`,
       res.status,
-      body.errorCode,
+      failure.errorCode,
     );
   }
   return body.title ?? null;
@@ -2011,16 +2061,17 @@ export async function cancelWorkbenchSession(sessionId: string): Promise<void> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      message?: string;
-      code?: string;
-      errorCode?: string;
+      error?: unknown;
+      message?: unknown;
+      code?: unknown;
+      errorCode?: unknown;
       status?: SessionStatus;
     };
+    const failure = workbenchApiFailureDetails(body);
     throw new WorkbenchApiError(
-      body.message ?? body.error ?? `POST cancel -> ${res.status}`,
+      failure.message ?? `POST cancel -> ${res.status}`,
       res.status,
-      body.code ?? body.errorCode,
+      failure.errorCode,
       body.status,
     );
   }
@@ -2084,8 +2135,9 @@ export async function postWorkbenchMessage(
     }),
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-    throw new Error(body.message ?? body.error ?? `POST messages -> ${res.status}`);
+    const body = (await res.json().catch(() => ({}))) as WorkbenchApiFailure;
+    const failure = workbenchApiFailureDetails(body);
+    throw new Error(failure.message ?? `POST messages -> ${res.status}`);
   }
   const body = (await res.json().catch(() => ({}))) as {
     elementRefsAccepted?: unknown;
@@ -2135,12 +2187,15 @@ export async function uploadWorkbenchMaterial(file: File): Promise<WorkbenchMate
     bytes?: number;
     mime?: string;
     extraction?: { status?: WorkbenchMaterial['extractionStatus'] };
-    error?: string;
-    message?: string;
+    error?: unknown;
+    message?: unknown;
+    errorCode?: unknown;
+    code?: unknown;
   };
   if (!res.ok || !body.materialId) {
     const requestId = res.headers.get('x-request-id') ?? undefined;
-    const message = body.message ?? body.error ?? `POST /api/materials -> ${res.status}`;
+    const failure = workbenchApiFailureDetails(body);
+    const message = failure.message ?? `POST /api/materials -> ${res.status}`;
     throw new WorkbenchMaterialUploadError(
       requestId ? `${message} [requestId=${requestId}]` : message,
       res.status,

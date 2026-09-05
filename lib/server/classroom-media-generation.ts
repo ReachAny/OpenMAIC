@@ -5,10 +5,9 @@
  * writes them to disk, and returns serving URL mappings.
  */
 
-import { promises as fs } from 'fs';
 import path from 'path';
 import { createLogger } from '@/lib/logger';
-import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
+import { putServerAssetBytes } from '@/lib/server/server-asset-bytes';
 import { generateImage } from '@/lib/media/image-providers';
 import { generateVideo, normalizeVideoOptions } from '@/lib/media/video-providers';
 import { generateTTS } from '@/lib/audio/tts-providers';
@@ -16,9 +15,13 @@ import { DEFAULT_TTS_VOICES, DEFAULT_TTS_MODELS, TTS_PROVIDERS } from '@/lib/aud
 import { IMAGE_PROVIDERS } from '@/lib/media/image-providers';
 import { VIDEO_PROVIDERS } from '@/lib/media/video-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
+  getReachAnyManagedModels,
   getServerImageProviders,
   getServerVideoProviders,
   getServerTTSProviders,
+  isReachAnyManagedOnlyDeployment,
   resolveImageApiKey,
   resolveImageBaseUrl,
   resolveImageModel,
@@ -56,10 +59,6 @@ type ServerTransportSpeechAction = SpeechAction & { audioUrl?: string };
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function ensureDir(dir: string) {
-  await fs.mkdir(dir, { recursive: true });
-}
-
 const DOWNLOAD_TIMEOUT_MS = 120_000; // 2 minutes
 const DOWNLOAD_MAX_SIZE = 100 * 1024 * 1024; // 100 MB
 
@@ -73,10 +72,6 @@ async function downloadToBuffer(url: string): Promise<Buffer> {
   return Buffer.from(await resp.arrayBuffer());
 }
 
-function mediaServingUrl(baseUrl: string, classroomId: string, subPath: string): string {
-  return `${baseUrl}/api/classroom-media/${classroomId}/${subPath}`;
-}
-
 // ---------------------------------------------------------------------------
 // Image / Video generation
 // ---------------------------------------------------------------------------
@@ -85,9 +80,9 @@ export async function generateMediaForClassroom(
   outlines: SceneOutline[],
   classroomId: string,
   baseUrl: string,
+  coursePrincipal?: string,
 ): Promise<Record<string, string>> {
-  const mediaDir = path.join(CLASSROOMS_DIR, classroomId, 'media');
-  await ensureDir(mediaDir);
+  void baseUrl;
 
   // Collect all media generation requests from outlines
   const requests = outlines.flatMap((o) => o.mediaGenerations ?? []);
@@ -104,6 +99,17 @@ export async function generateMediaForClassroom(
 
   const mediaMap: Record<string, string> = {};
 
+  // In a ReachAny managed deployment the model-service catalog is the only
+  // source of executable model IDs. Do not fall back to OpenMAIC's static
+  // adapter defaults when the catalog is unavailable or empty.
+  const managedImageModels = isReachAnyManagedOnlyDeployment()
+    ? await getReachAnyManagedModels('image_generation')
+    : undefined;
+  const managedVideoModels =
+    isReachAnyManagedOnlyDeployment() && videoProviderIds.length > 0
+      ? await getReachAnyManagedModels('video_generation')
+      : undefined;
+
   // Separate image and video requests, generate each type sequentially
   // but run the two types in parallel (providers often have limited concurrency).
   const imageRequests = requests.filter((r) => r.type === 'image' && imageProviderIds.length > 0);
@@ -113,6 +119,7 @@ export async function generateMediaForClassroom(
     for (const req of imageRequests) {
       try {
         const providerId = imageProviderIds[0] as ImageProviderId;
+        assertReachAnyProviderAllowed('image', providerId);
         const apiKey = resolveImageApiKey(providerId);
         const providerConfig = IMAGE_PROVIDERS[providerId];
         if (providerConfig?.requiresApiKey && !apiKey) {
@@ -125,7 +132,14 @@ export async function generateMediaForClassroom(
         // path is internal (no HTTP response to fail loud with), so the
         // adapter's requireModel must stay a backstop, never the primary
         // failure mode.
-        const model = resolveImageModel(providerId) ?? providerConfig?.models?.[0]?.id;
+        const model = managedImageModels
+          ? managedImageModels[0]
+          : (resolveImageModel(providerId) ?? providerConfig?.models?.[0]?.id);
+        if (managedImageModels && !model) {
+          log.warn(`No ReachAny image model is available, skipping ${req.elementId}`);
+          continue;
+        }
+        await assertReachAnyManagedModelAllowed('image_generation', 'image', providerId, model);
 
         const result = await generateImage(
           { providerId, apiKey, baseUrl: resolveImageBaseUrl(providerId), model },
@@ -146,10 +160,14 @@ export async function generateMediaForClassroom(
           continue;
         }
 
-        const filename = `${req.elementId}.${ext}`;
-        await fs.writeFile(path.join(mediaDir, filename), buf);
-        mediaMap[req.elementId] = mediaServingUrl(baseUrl, classroomId, `media/${filename}`);
-        log.info(`Generated image: ${filename}`);
+        const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : `image/${ext}`;
+        mediaMap[req.elementId] = await putServerAssetBytes({
+          principal: coursePrincipal ?? '',
+          bytes: buf,
+          mime,
+          meta: { stageId: classroomId, source: 'classroom-image', prompt: req.prompt },
+        });
+        log.info(`Generated image asset: ${mediaMap[req.elementId]}`);
       } catch (err) {
         log.warn(`Image generation failed for ${req.elementId}:`, err);
       }
@@ -160,6 +178,7 @@ export async function generateMediaForClassroom(
     for (const req of videoRequests) {
       try {
         const providerId = videoProviderIds[0] as VideoProviderId;
+        assertReachAnyProviderAllowed('video', providerId);
         const apiKey = resolveVideoApiKey(providerId);
         if (!apiKey) {
           log.warn(`No API key for video provider "${providerId}", skipping ${req.elementId}`);
@@ -172,7 +191,14 @@ export async function generateMediaForClassroom(
         // adapter's requireModel must stay a backstop, never the primary
         // failure mode.
         const providerConfig = VIDEO_PROVIDERS[providerId];
-        const model = resolveVideoModel(providerId) ?? providerConfig?.models?.[0]?.id;
+        const model = managedVideoModels
+          ? managedVideoModels[0]
+          : (resolveVideoModel(providerId) ?? providerConfig?.models?.[0]?.id);
+        if (managedVideoModels && !model) {
+          log.warn(`No ReachAny video model is available, skipping ${req.elementId}`);
+          continue;
+        }
+        await assertReachAnyManagedModelAllowed('video_generation', 'video', providerId, model);
 
         const normalized = normalizeVideoOptions(providerId, {
           prompt: req.prompt,
@@ -185,10 +211,13 @@ export async function generateMediaForClassroom(
         );
 
         const buf = await downloadToBuffer(result.url);
-        const filename = `${req.elementId}.mp4`;
-        await fs.writeFile(path.join(mediaDir, filename), buf);
-        mediaMap[req.elementId] = mediaServingUrl(baseUrl, classroomId, `media/${filename}`);
-        log.info(`Generated video: ${filename}`);
+        mediaMap[req.elementId] = await putServerAssetBytes({
+          principal: coursePrincipal ?? '',
+          bytes: buf,
+          mime: 'video/mp4',
+          meta: { stageId: classroomId, source: 'classroom-video', prompt: req.prompt },
+        });
+        log.info(`Generated video asset: ${mediaMap[req.elementId]}`);
       } catch (err) {
         log.warn(`Video generation failed for ${req.elementId}:`, err);
       }
@@ -248,9 +277,9 @@ export async function generateTTSForClassroom(
   scenes: Scene[],
   classroomId: string,
   baseUrl: string,
+  coursePrincipal?: string,
 ): Promise<void> {
-  const audioDir = path.join(CLASSROOMS_DIR, classroomId, 'audio');
-  await ensureDir(audioDir);
+  void baseUrl;
 
   // Resolve TTS provider (exclude browser-native-tts and operator force-disabled
   // providers — server precedence, #665).
@@ -263,6 +292,7 @@ export async function generateTTSForClassroom(
   }
 
   const providerId = ttsProviderIds[0] as TTSProviderId;
+  assertReachAnyProviderAllowed('tts', providerId);
   const apiKey = resolveTTSApiKey(providerId);
   const ttsProvider = TTS_PROVIDERS[providerId as keyof typeof TTS_PROVIDERS];
   if (ttsProvider?.requiresApiKey && !apiKey) {
@@ -271,7 +301,13 @@ export async function generateTTSForClassroom(
   }
   const ttsBaseUrl = resolveTTSBaseUrl(providerId) || ttsProvider?.defaultBaseUrl;
   const voice = DEFAULT_TTS_VOICES[providerId as keyof typeof DEFAULT_TTS_VOICES] || 'default';
-  const format = ttsProvider?.supportedFormats?.[0] || 'mp3';
+  const managedSpeechModels = isReachAnyManagedOnlyDeployment()
+    ? await getReachAnyManagedModels('audio_speech')
+    : undefined;
+  const ttsModel = managedSpeechModels
+    ? (managedSpeechModels[0] ?? '')
+    : DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '';
+  await assertReachAnyManagedModelAllowed('audio_speech', 'tts', providerId, ttsModel);
   if (providerId === VOXCPM_TTS_PROVIDER_ID && voice === VOXCPM_AUTO_VOICE_ID) {
     log.warn('VoxCPM Auto Voice requires agent context; skipping server-side TTS generation');
     return;
@@ -284,22 +320,14 @@ export async function generateTTSForClassroom(
     // mirroring the client-side approach. Each sub-action gets its own audio file.
     scene.actions = splitLongSpeechActions(scene.actions, providerId);
 
-    // Use scene order to make audio IDs unique across scenes
-    const sceneOrder = scene.order;
-
     for (const action of scene.actions) {
       if (action.type !== 'speech' || !(action as SpeechAction).text) continue;
       const speechAction = action as ServerTransportSpeechAction;
-      // Server transport emits the derived id plus the serving URL; the
-      // client-side converter collapses the pair into one pool asset on
-      // first load. Browser generation allocates pool ids directly.
-      const audioId = `tts_s${sceneOrder}_${action.id}`;
-
       try {
         const result = await generateTTS(
           {
             providerId,
-            modelId: DEFAULT_TTS_MODELS[providerId as keyof typeof DEFAULT_TTS_MODELS] || '',
+            modelId: ttsModel,
             apiKey,
             baseUrl: ttsBaseUrl,
             voice,
@@ -308,12 +336,19 @@ export async function generateTTSForClassroom(
           speechAction.text,
         );
 
-        const filename = `${audioId}.${result.format || format}`;
-        await fs.writeFile(path.join(audioDir, filename), result.audio);
-
-        speechAction.audioId = audioId;
-        speechAction.audioUrl = mediaServingUrl(baseUrl, classroomId, `audio/${filename}`);
-        log.info(`Generated TTS: ${filename} (${result.audio.length} bytes)`);
+        speechAction.audioId = await putServerAssetBytes({
+          principal: coursePrincipal ?? '',
+          bytes: Buffer.from(result.audio),
+          mime:
+            result.format === 'wav'
+              ? 'audio/wav'
+              : result.format === 'ogg'
+                ? 'audio/ogg'
+                : 'audio/mpeg',
+          meta: { stageId: classroomId, source: 'classroom-tts', voice },
+        });
+        delete speechAction.audioUrl;
+        log.info(`Generated TTS asset: ${speechAction.audioId} (${result.audio.length} bytes)`);
       } catch (err) {
         log.warn(`TTS generation failed for action ${action.id}:`, err);
       }

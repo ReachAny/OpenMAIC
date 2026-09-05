@@ -99,6 +99,53 @@ let builtinCache: LoadedSkill[] | null = null;
 const USER_SKILL_VIRTUAL_ROOT = '/__openmaic_user_skills__';
 
 /**
+ * pi's skill walker compares environment paths with POSIX string operations.
+ * Node returns native backslash paths on Windows, which makes its ignore
+ * matcher reject a child directory as an absolute, non-relative path. Keep
+ * filesystem access native while presenting slash-separated metadata to pi.
+ */
+function createSkillLoaderEnvironment(): NodeExecutionEnv {
+  const env = new NodeExecutionEnv({ cwd: skillsDir });
+  const toPortablePath = (path: string) => path.replaceAll('\\', '/');
+  const portableFileInfo = <T extends { name: string; path: string }>(info: T) => {
+    const path = toPortablePath(info.path);
+    return { ...info, path, name: path.split('/').at(-1) ?? info.name };
+  };
+
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === 'fileInfo') {
+        return async (path: string) => {
+          const result = await target.fileInfo(path);
+          return result.ok
+            ? { ...result, value: portableFileInfo(result.value) }
+            : result;
+        };
+      }
+      if (property === 'listDir') {
+        return async (path: string, abortSignal?: AbortSignal) => {
+          const result = await target.listDir(path, abortSignal);
+          return result.ok
+            ? {
+                ...result,
+                value: result.value.map(portableFileInfo),
+              }
+            : result;
+        };
+      }
+      if (property === 'canonicalPath') {
+        return async (path: string) => {
+          const result = await target.canonicalPath(path);
+          return result.ok ? { ...result, value: toPortablePath(result.value) } : result;
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+/**
  * The de-prioritisation preamble user-authored skill text is wrapped in.
  *
  * This is a SECURITY BOUNDARY: a user-controlled skill body must never read as
@@ -139,7 +186,7 @@ async function listBuiltinSkills(): Promise<LoadedSkill[]> {
   if (builtinCache) return builtinCache;
   if (!existsSync(skillsDir)) return (builtinCache = []);
 
-  const env = new NodeExecutionEnv({ cwd: skillsDir });
+  const env = createSkillLoaderEnvironment();
   const { skills, diagnostics } = await loadSkills(env, skillsDir);
   for (const d of diagnostics) {
     log.warn(`${d.code}: ${d.message} (${d.path})`);

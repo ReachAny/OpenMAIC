@@ -14,6 +14,7 @@ import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { AGENT_COLOR_PALETTE } from '@/lib/constants/agent-defaults';
 import { normalizeVoiceDesign } from '@/lib/audio/voice-design';
 import { isQwenCloneVoice, resolveTTSModelForVoice } from '@/lib/audio/constants';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('Agent Profiles API');
 
@@ -128,6 +129,8 @@ function stripCodeFences(text: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let stageName: string | undefined;
   let modelString: string | undefined;
   try {

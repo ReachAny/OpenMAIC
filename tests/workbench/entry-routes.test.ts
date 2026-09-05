@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ enabled: false }));
+const state = vi.hoisted(() => ({ enabled: false, calls: [] as unknown[][] }));
 const navigation = vi.hoisted(() => ({
   redirect: vi.fn((href: string) => {
     throw new Error(`redirect:${href}`);
@@ -12,7 +12,10 @@ const navigation = vi.hoisted(() => ({
 
 vi.mock('next/navigation', () => navigation);
 vi.mock('@/lib/workbench/entry-gate', () => ({
-  isWorkbenchEntryEnabled: () => state.enabled,
+  isWorkbenchEntryEnabled: (...args: unknown[]) => {
+    state.calls.push(args);
+    return state.enabled;
+  },
 }));
 vi.mock('@/components/workbench/WorkspaceEntry', () => ({
   WorkspaceEntry: () => null,
@@ -23,27 +26,31 @@ vi.mock('@/app/workbench/new/client', () => ({
 
 import WorkbenchNewCompatibilityPage from '@/app/workbench/new/page';
 import WorkspacePage from '@/app/workspace/page';
+import { WorkspaceAccessDenied } from '@/app/workspace/access-denied';
 
 describe('workbench entry routes', () => {
   beforeEach(() => {
     state.enabled = false;
+    state.calls = [];
     navigation.redirect.mockClear();
     navigation.notFound.mockClear();
   });
 
-  it('redirects the workspace home instead of rendering a broken shell when disabled', () => {
-    expect(() => WorkspacePage()).toThrow('redirect:/');
-    expect(navigation.redirect).toHaveBeenCalledWith('/');
+  it('renders a visible access error instead of a blank shell when disabled', async () => {
+    const page = await WorkspacePage({ searchParams: Promise.resolve({ course: 'course-a' }) });
+    expect(page.type).toBe(WorkspaceAccessDenied);
+    expect(state.calls).toEqual([['course-a']]);
+    expect(navigation.redirect).not.toHaveBeenCalled();
   });
 
-  it('does not expose the legacy launch bridge when disabled', () => {
-    expect(() => WorkbenchNewCompatibilityPage()).toThrow('not-found');
+  it('does not expose the legacy launch bridge when disabled', async () => {
+    await expect(WorkbenchNewCompatibilityPage()).rejects.toThrow('not-found');
     expect(navigation.notFound).toHaveBeenCalledOnce();
   });
 
-  it('renders both entry routes when the shared gate is enabled', () => {
+  it('renders both entry routes when the shared gate is enabled', async () => {
     state.enabled = true;
-    expect(WorkspacePage()).toBeTruthy();
+    expect((await WorkspacePage()).type).not.toBe(WorkspaceAccessDenied);
     expect(WorkbenchNewCompatibilityPage()).toBeTruthy();
     expect(navigation.redirect).not.toHaveBeenCalled();
     expect(navigation.notFound).not.toHaveBeenCalled();

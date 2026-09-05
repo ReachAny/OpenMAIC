@@ -992,6 +992,8 @@
     "deleteFolderAndCourses_other": "删除文件夹和 {{count}} 门课程",
     "notFound": "找不到这门课程",
     "notFoundDesc": "课程不存在，或已被删除。",
+    "authorizationRequired": "暂时无法打开 OpenMAIC 课程",
+    "authorizationRequiredDesc": "登录状态或课程授权已失效，请从教师端重新进入。",
     "backToHome": "返回首页"
   },
   "upload": {

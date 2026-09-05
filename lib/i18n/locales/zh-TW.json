@@ -977,6 +977,8 @@
     "deleteFolderAndCourses_other": "刪除資料夾和 {{count}} 門課程",
     "notFound": "找不到這門課程",
     "notFoundDesc": "課程不存在，或已被刪除。",
+    "authorizationRequired": "暫時無法開啟 OpenMAIC 課程",
+    "authorizationRequiredDesc": "登入狀態或課程授權已失效，請從教師端重新進入。",
     "backToHome": "返回首頁"
   },
   "upload": {

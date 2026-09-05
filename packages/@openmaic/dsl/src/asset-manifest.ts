@@ -176,8 +176,14 @@ export function enumerateAssetManifest(
     }
     for (let index = 0; index < (scene.actions ?? []).length; index += 1) {
       const action = scene.actions![index];
-      if (action.type !== 'speech' || !action.audioId) continue;
-      record(action.audioId, 'audio', `scene:${sceneIndex}:speech:${index}`);
+      if (action.type !== 'speech') continue;
+      if (action.audioId) {
+        record(action.audioId, 'audio', `scene:${sceneIndex}:speech:${index}`);
+      }
+      const legacyAudioUrl = (action as Action & { audioUrl?: string }).audioUrl;
+      if (legacyAudioUrl) {
+        record(legacyAudioUrl, 'audio', `scene:${sceneIndex}:speech:${index}:legacy-url`);
+      }
     }
   }
 

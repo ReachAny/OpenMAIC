@@ -6,7 +6,7 @@
  * `{ materialId, originalName, bytes, mime, extraction }` 201 view. This route
  * implements the reference's upload contract on the owner-scoped material
  * library (`lib/persistence/owner-materials.ts`) with the neutral local
- * material byte store.
+ * PostgreSQL asset pool.
  *
  * ## Upload contract (the reference's)
  *
@@ -56,9 +56,11 @@ import {
   publicMaterial,
   reclaimStaleOwnerMaterialUploads,
   registerOwnerMaterial,
+  updateOwnerMaterialObjectKey,
 } from '@/lib/persistence/owner-materials';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
-import { getMaterialByteStore } from '@/lib/server/materials/bytes';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+import { putServerAssetBytes, removeServerAssetBytes } from '@/lib/server/server-asset-bytes';
 import {
   isWorkbenchMaterialMime,
   MEDIA_MIME_TYPES,
@@ -216,10 +218,14 @@ export async function POST(req: NextRequest) {
       }
       const createdMaterialId = createMaterialId();
       materialId = createdMaterialId;
-      const ossKey = `materials/${ownerId}/${createdMaterialId}`;
+      // The row is reserved before bytes are written for quota correctness;
+      // the concrete PG asset id is attached immediately after put succeeds.
+      const ossKey = `pending:${createdMaterialId}`;
 
-      const provider = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
-      const byteStore = getMaterialByteStore();
+      const connectionString = process.env.DATABASE_URL;
+      const provider = await getServerPersistenceProvider(
+        connectionString ? stageConnectionString(connectionString, 'draft') : '',
+      );
 
       // Browsers send Content-Length for a File body. When an intermediary
       // strips it, reserve the per-file maximum so an unmeasured stream can
@@ -238,7 +244,9 @@ export async function POST(req: NextRequest) {
         ownerId,
         async (objectKey) => {
           try {
-            await byteStore.delete(objectKey);
+            if (typeof objectKey === 'string' && objectKey.startsWith('ast_')) {
+              await removeServerAssetBytes(ownerId, objectKey);
+            }
           } catch (error) {
             console.warn(
               'material stale byte deletion failed; keeping its reservation for the next pass',
@@ -340,9 +348,20 @@ export async function POST(req: NextRequest) {
       // 24-hour reclaim, preserving delete-before-reservation-removal order.
       const hash = createHash('sha256').update(bytes).digest('hex');
       let bytesStored = false;
+      let assetId: string | undefined;
       try {
-        await byteStore.put(ossKey, bytes, mime);
+        assetId = await putServerAssetBytes({
+          principal: ownerId,
+          bytes,
+          mime,
+          meta: { source: 'owner-material', materialId: createdMaterialId },
+        });
         bytesStored = true;
+        await updateOwnerMaterialObjectKey(
+          provider.pool as unknown as ConnectableQueryable,
+          createdMaterialId,
+          assetId,
+        );
         const row = await finalizeOwnerMaterial(
           provider.pool as unknown as ConnectableQueryable,
           createdMaterialId,
@@ -368,7 +387,7 @@ export async function POST(req: NextRequest) {
         let bytesDeleted = !bytesStored;
         if (bytesStored) {
           try {
-            await byteStore.delete(ossKey);
+            if (assetId) await removeServerAssetBytes(ownerId, assetId);
             bytesDeleted = true;
           } catch (cleanupError) {
             console.warn(

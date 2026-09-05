@@ -9,6 +9,8 @@ import type { NextRequest } from 'next/server';
 import { getModel, getProvider, parseModelString, type ModelWithInfo } from '@/lib/ai/providers';
 import type { ProviderType, ThinkingConfig } from '@/lib/types/provider';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   resolveApiKey,
   resolveBaseUrl,
@@ -68,6 +70,8 @@ export async function resolveModel(params: {
     );
   }
   const { providerId, modelId } = parseModelString(modelString);
+  assertReachAnyProviderAllowed('providers', providerId);
+  await assertReachAnyManagedModelAllowed('chat', 'providers', providerId, modelId);
 
   // When a stage route overrides the client's model, the client-sent connection
   // params (apiKey/baseUrl/providerType) belong to the client's *other* model

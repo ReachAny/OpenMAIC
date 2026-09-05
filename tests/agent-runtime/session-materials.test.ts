@@ -11,12 +11,13 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureAgentSessionSchema, PgAgentSessionStore } from '@openmaic/storage/agent-session/pg';
+import { ensureAgentSessionMaterialSchema } from '@openmaic/storage/material/pg';
 import type { Queryable } from '@openmaic/storage/asset/pg';
-import { setMaterialByteStoreForTests } from '@/lib/server/materials/bytes';
-
 const mocks = vi.hoisted(() => ({
   getAgentSessionStore: vi.fn(),
   getServerPersistenceProvider: vi.fn(),
+  assetBytes: new Map<string, { principal: string; bytes: Buffer; mime: string }>(),
+  assetCounter: 0,
 }));
 
 vi.mock('@/lib/server/agent-runtime/store', () => ({
@@ -25,6 +26,25 @@ vi.mock('@/lib/server/agent-runtime/store', () => ({
 
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: mocks.getServerPersistenceProvider,
+}));
+
+vi.mock('@/lib/server/server-asset-bytes', () => ({
+  putServerAssetBytes: vi.fn(async (input: { principal: string; bytes: Buffer; mime: string }) => {
+    const id = `ast_material_${++mocks.assetCounter}`;
+    mocks.assetBytes.set(id, {
+      principal: input.principal,
+      bytes: Buffer.from(input.bytes),
+      mime: input.mime,
+    });
+    return id;
+  }),
+  resolveServerAssetBytes: vi.fn(async (principal: string, id: string) => {
+    const value = mocks.assetBytes.get(id);
+    return value?.principal === principal ? { bytes: value.bytes, mime: value.mime } : null;
+  }),
+  removeServerAssetBytes: vi.fn(async (principal: string, id: string) => {
+    if (mocks.assetBytes.get(id)?.principal === principal) mocks.assetBytes.delete(id);
+  }),
 }));
 
 import {
@@ -42,16 +62,7 @@ async function makeHost() {
   const db = new PGlite();
   await db.waitReady;
   await ensureAgentSessionSchema(db);
-  const bytes = new Map<string, Buffer>();
-  setMaterialByteStoreForTests({
-    put: async (key, body) => void bytes.set(key, Buffer.from(body as Uint8Array)),
-    get: async (key) => {
-      const value = bytes.get(key);
-      if (!value) throw new Error(`missing material bytes: ${key}`);
-      return value;
-    },
-    delete: async (key) => void bytes.delete(key),
-  });
+  await ensureAgentSessionMaterialSchema(db);
   const sessionStore = new PgAgentSessionStore(db, {
     withTransaction: (body) => db.transaction((tx: Queryable) => body(tx)),
   });
@@ -60,11 +71,13 @@ async function makeHost() {
   mocks.getAgentSessionStore.mockResolvedValue(sessionStore);
   mocks.getServerPersistenceProvider.mockResolvedValue({ pool: db });
   vi.stubEnv('DATABASE_URL', connectionString);
-  return { bytes, db, sessionStore };
+  return { bytes: mocks.assetBytes, db, sessionStore };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.assetBytes.clear();
+  mocks.assetCounter = 0;
   vi.unstubAllEnvs();
 });
 
@@ -106,9 +119,9 @@ describe('session materials persistence', () => {
       sourceUrl: 'https://example.com/article',
       textChars: markdown.length,
     });
-    expect(material?.textAssetId).toMatch(/^materials\/session-1\/mat_[^/]+\/text\.md$/);
+    expect(material?.textAssetId).toMatch(/^ast_material_/);
 
-    expect(bytes.get(material!.textAssetId!)?.toString('utf8')).toBe(markdown);
+    expect(bytes.get(material!.textAssetId!)?.bytes.toString('utf8')).toBe(markdown);
 
     // The session listing shows the new material newest-first.
     const listed = await listSessionMaterials('session-1');
@@ -149,8 +162,7 @@ describe('session materials persistence', () => {
     };
 
     await expect(createWebMaterial('session-missing', page)).rejects.toMatchObject({
-      name: 'AgentSessionMaterialError',
-      code: 'session_missing',
+      name: 'SessionMaterialBindingError',
     });
     expect([...bytes.keys()]).toEqual([]);
   });

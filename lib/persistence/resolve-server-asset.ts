@@ -7,15 +7,16 @@
  *
  * The resolution answers in five states so the route can map each to an honest
  * HTTP status: not configured (no `DATABASE_URL`), unauthenticated (the
- * development persistence credential is missing or wrong), missing (no entry
+ * bridge session or stage grant is invalid), missing (no entry
  * under this id for this principal), too large (the recorded byte length
  * exceeds the caller-supplied cap, rejected before any bytes are read), or
  * resolved.
  */
 import { AssetNotFoundError, toAssetId, type AssetPrincipal } from '@openmaic/storage';
 
-import { authenticatePersistenceHeaders } from './server-auth';
 import { getServerPersistenceProvider } from './server-provider';
+import { stageConnectionString } from './stage-routing';
+import { authorizeOpenMaicRequest } from '@/lib/reachacademy/bridge/guard';
 
 export type ServerAssetResolution =
   | { status: 'resolved'; buffer: Buffer; mimeType: string }
@@ -43,22 +44,23 @@ export async function resolveServerAsset(
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) return { status: 'unconfigured' };
 
-  // Shared-partition development auth: this authenticator maps every caller to
-  // one 'shared' asset principal (see the server-auth.ts docstring). It is the
-  // documented stopgap for this deployment shape — its cost surface is
-  // accepted until real per-learner principals land in a later part of the
-  // RFC; do not extend it here.
-  const principal = authenticatePersistenceHeaders(headers);
-  // The authenticator always supplies a partition key on success, but its type
-  // leaves it optional; a keyless principal fails closed as unauthenticated.
-  if (!principal?.key) return { status: 'unauthenticated' };
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(
+      new Request('http://openmaic.internal/api/persistence/assets', { headers }),
+    );
+  } catch {
+    return { status: 'unauthenticated' };
+  }
   const assetPrincipal: AssetPrincipal = {
-    key: principal.key,
-    ...(principal.learnerKey ? { learnerKey: principal.learnerKey } : {}),
+    key: authorization.grant.coursePrincipal,
+    learnerKey: authorization.grant.learnerKey,
   };
 
   try {
-    const provider = await getServerPersistenceProvider(connectionString);
+    const provider = await getServerPersistenceProvider(
+      stageConnectionString(connectionString, authorization.grant.stage),
+    );
     const ref = toAssetId(assetId);
     // Size check BEFORE materialization: `identify` reads only the registry
     // row (recorded byte length), never the bytes, so an oversized asset is

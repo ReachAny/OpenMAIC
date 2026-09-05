@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import {
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   resolveManagedAliDocMindCredentials,
   resolvePDFApiKey,
@@ -9,10 +10,13 @@ import {
 } from '@/lib/server/provider-config';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { MINERU_CLOUD_DEFAULT_BASE } from '@/lib/pdf/constants';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('Verify PDF Provider');
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let providerId: string | undefined;
   try {
     const body = await req.json();
@@ -22,6 +26,7 @@ export async function POST(req: NextRequest) {
     if (!providerId) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Provider ID is required');
     }
+    assertReachAnyProviderAllowed('pdf', providerId);
 
     // Managed providers are admin-owned: ignore any client-sent key/baseUrl.
     const managed = isServerConfiguredProvider('pdf', providerId);

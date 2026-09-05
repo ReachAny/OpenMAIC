@@ -1,5 +1,6 @@
 import { apiSuccess } from '@/lib/server/api-response';
 import { checkRenderServiceHealth } from '@/lib/server/render-service';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +11,9 @@ export const dynamic = 'force-dynamic';
  * disabled and the menu shows only "Download ZIP" rather than advertising an
  * MP4 export that would then fail. Never leaks the service URL to the client.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   const enabled = await checkRenderServiceHealth();
   return apiSuccess({ enabled });
 }

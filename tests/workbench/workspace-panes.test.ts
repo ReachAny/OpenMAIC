@@ -8,6 +8,7 @@ import {
   agentOwnsPaneCourse,
   clampChatWidth,
   closeCourseTab,
+  hrefWithWorkspaceContext,
   legacyWorkspaceHref,
   NO_PANES,
   parseChatWidth,
@@ -16,12 +17,14 @@ import {
   openCourseTab,
   openCourseTabs,
   readWorkspacePanes,
+  readWorkspaceContext,
   resolveWorkspaceRender,
   restoreCourseTabs,
   samePanes,
   withCourse,
   withSession,
   workspaceHref,
+  workspaceHrefWithContext,
   workspaceLayout,
   type PaneCollapse,
 } from '@/lib/workbench/workspace-panes';
@@ -31,6 +34,50 @@ const search = (query: string) => new URLSearchParams(query);
 const OPEN: PaneCollapse = { nav: false, chat: false, classroom: false };
 
 describe('reading panes out of the URL', () => {
+  it('reads and round-trips the optional launch context', () => {
+    const context = readWorkspaceContext(search('?stageId=stage%2F1&mode=edit'));
+    expect(context).toEqual({ stageId: 'stage/1', mode: 'edit' });
+    expect(workspaceHrefWithContext({ sessionId: null, courseId: 'stage/1' }, context)).toBe(
+      '/workspace?course=stage%2F1&stageId=stage%2F1&mode=edit',
+    );
+  });
+
+  /**
+   * Every hop the host launch can reach carries the context, because
+   * stage-scoped requests derive `x-openmaic-stage-id` from the URL — a
+   * navigation that drops `stageId` silently unbinds the destination page from
+   * its grant.
+   */
+  it('attaches the launch context to any in-app href', () => {
+    const context = readWorkspaceContext(search('?stageId=stage%2F1&mode=edit'));
+    expect(hrefWithWorkspaceContext('/generation-preview', context)).toBe(
+      '/generation-preview?stageId=stage%2F1&mode=edit',
+    );
+    expect(hrefWithWorkspaceContext('/classroom/stage%2F1', context)).toBe(
+      '/classroom/stage%2F1?stageId=stage%2F1&mode=edit',
+    );
+  });
+
+  it('preserves an existing query and never duplicates context params', () => {
+    const context = readWorkspaceContext(search('?stageId=s1&mode=edit'));
+    const once = hrefWithWorkspaceContext('/classroom/s1?from=workspace', context);
+    expect(once).toBe('/classroom/s1?from=workspace&stageId=s1&mode=edit');
+    expect(hrefWithWorkspaceContext(once, context)).toBe(once);
+  });
+
+  it('leaves a href untouched when there is no host context', () => {
+    expect(hrefWithWorkspaceContext('/generation-preview', readWorkspaceContext(search('')))).toBe(
+      '/generation-preview',
+    );
+  });
+
+  it('ignores invalid launch modes', () => {
+    expect(readWorkspaceContext(search('?stageId=s&mode=unknown'))).toEqual({
+      stageId: 's',
+      mode: null,
+    });
+  });
+
   it('reads both params independently', () => {
     expect(readWorkspacePanes(search('?session=s1&course=c1'))).toEqual({
       sessionId: 's1',

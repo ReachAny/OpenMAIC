@@ -7,9 +7,10 @@
  * at a PGlite-backed store with a single module mock, exactly like the
  * reference product's `getDb()` seam.
  */
-import { PgUserSkillStore, ensureUserSkillSchema } from '@openmaic/storage/skill/pg';
+import { PgUserSkillStore } from '@openmaic/storage/skill/pg';
 
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
 
 import type { Queryable, WithTransaction } from '@openmaic/storage/skill/pg';
 import type { Pool } from 'pg';
@@ -49,8 +50,9 @@ export function nodePostgresTransaction(pool: Pool): WithTransaction {
 }
 
 async function createUserSkillStore(connectionString: string): Promise<PgUserSkillStore> {
-  const { pool } = await getServerPersistenceProvider(connectionString);
-  await ensureUserSkillSchema(pool);
+  const { pool } = await getServerPersistenceProvider(
+    stageConnectionString(connectionString, 'draft'),
+  );
   return new PgUserSkillStore(pool, { withTransaction: nodePostgresTransaction(pool) });
 }
 

@@ -4,7 +4,7 @@
  * Returns the public-state metadata for a stage. Used by the Share menu CTA
  * to know whether to show "Publish" or "Already published · Unpublish".
  *
- * No auth required — any caller who has the stage ID can read its public flag.
+ * Requires the caller's stage-bound OpenMAIC session grant.
  *
  * Convention: snake_case error codes (e.g. `not_found`, `internal_error`).
  */
@@ -12,7 +12,8 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
-import { resolveStageAccess } from '@/lib/server/stage-access';
+import { getStageAccessDb, resolveStageAccess } from '@/lib/server/stage-access';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 export const runtime = 'nodejs';
 
@@ -22,8 +23,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
   const { id } = await params;
+  const auth = await requireOpenMaicRoute(_req, { stageId: id, allowAnyStageGrant: false });
+  if ('response' in auth) return auth.response;
+  const stage = auth.authorization.grant.stage;
   try {
-    const access = await resolveStageAccess(id);
+    const access = await resolveStageAccess(id, await getStageAccessDb(stage));
 
     // Tombstoned and never-existed must be indistinguishable: this endpoint is
     // unauthenticated, so an answer other than plain 404 would let anyone

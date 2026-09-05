@@ -47,6 +47,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv('DATABASE_URL', 'postgres://stage-meta-route-test');
   mocks.runtimeConfigured = true;
   mocks.resolveRequestOwnerId.mockReturnValue('owner-1');
   mocks.accessRow = {
@@ -170,35 +171,16 @@ describe('POST /api/stages/[id]/generation-complete', () => {
 });
 
 describe('POST /api/stages/[id]/publish and unpublish', () => {
-  it('publishes an owner’s private course and returns the timestamp', async () => {
-    const response = await postPublish(
+  it('keeps native publication retired for every caller', async () => {
+    const publish = await postPublish(
       new NextRequest(`http://localhost/api/stages/${STAGE_ID}/publish`, { method: 'POST' }),
       params(STAGE_ID),
     );
-    expect(response.status).toBe(200);
-    const body = (await response.json()) as { success: boolean; publishedAt: number; name: string };
-    expect(body).toMatchObject({ success: true, name: 'Course' });
-    expect(typeof body.publishedAt).toBe('number');
-  });
-
-  it('unpublishes and clears the timestamp', async () => {
-    mocks.accessRow!.meta_is_public = true;
-    mocks.accessRow!.meta_published_at = 1_700_000_000_000;
-    const response = await postUnpublish(
+    const unpublish = await postUnpublish(
       new NextRequest(`http://localhost/api/stages/${STAGE_ID}/unpublish`, { method: 'POST' }),
       params(STAGE_ID),
     );
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ success: true });
-  });
-
-  it('refuses an anonymous owner with login_required', async () => {
-    mocks.resolveRequestOwnerId.mockReturnValue('anon:00000000-0000-4000-8000-000000000000');
-    const response = await postPublish(
-      new NextRequest(`http://localhost/api/stages/${STAGE_ID}/publish`, { method: 'POST' }),
-      params(STAGE_ID),
-    );
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: 'login_required' });
+    expect(publish.status).toBe(404);
+    expect(unpublish.status).toBe(404);
   });
 });

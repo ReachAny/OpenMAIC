@@ -1,7 +1,3 @@
-import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type Static } from 'typebox';
 
@@ -30,7 +26,7 @@ import {
   MAX_REMOTE_IMAGE_BYTES,
   readResponseBodyWithLimit,
 } from '@/lib/server/bounded-download';
-import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
+import { putServerAssetBytes } from '@/lib/server/server-asset-bytes';
 import type { CourseToolDeps } from './course-tools';
 import { COURSE_STAGE_ID_DESCRIPTION } from './course-stage';
 import { errorResult, MEDIA_TOOL_ERROR_REASONS } from './media-tool-result';
@@ -68,24 +64,21 @@ type GenerateConfiguredImage = (
 interface PersistImageInput {
   result: ImageGenerationResult;
   stageId: string;
+  assetPrincipal?: string;
   signal: AbortSignal;
 }
 
 type PersistGeneratedImage = (input: PersistImageInput) => Promise<string>;
 
-export interface GenerateImageToolDeps extends Pick<CourseToolDeps, 'sessionId' | 'abortSignal'> {
+export interface GenerateImageToolDeps extends Pick<
+  CourseToolDeps,
+  'sessionId' | 'abortSignal' | 'assetPrincipal'
+> {
   getConfiguredProviders?: typeof getServerImageProviders;
   resolveProviderConfig?: (providerId: ImageProviderId) => ImageGenerationConfig;
   generateConfiguredImage?: GenerateConfiguredImage;
   persistGeneratedImage?: PersistGeneratedImage;
   timeoutMs?: number;
-}
-
-function extensionForMime(mime: string): string {
-  if (mime === 'image/jpeg') return 'jpg';
-  if (mime === 'image/webp') return 'webp';
-  if (mime === 'image/gif') return 'gif';
-  return 'png';
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -161,19 +154,17 @@ async function imageBytes(
 export async function defaultPersistGeneratedImage({
   result,
   stageId,
+  assetPrincipal,
   signal,
 }: PersistImageInput): Promise<string> {
   const { bytes, mime } = await imageBytes(result, signal);
-  const hash = createHash('sha256').update(bytes).digest('hex');
-  throwIfAborted(signal);
-
-  const mediaDir = path.join(CLASSROOMS_DIR, stageId, 'media');
-  const filename = `generated-${hash}.${extensionForMime(mime)}`;
-  await fs.mkdir(mediaDir, { recursive: true });
-  throwIfAborted(signal);
-  await fs.writeFile(path.join(mediaDir, filename), bytes);
-  throwIfAborted(signal);
-  return `/api/classroom-media/${stageId}/media/${filename}`;
+  return putServerAssetBytes({
+    principal: assetPrincipal ?? '',
+    bytes,
+    mime,
+    meta: { stageId, source: 'agent-image' },
+    signal,
+  });
 }
 
 /**
@@ -320,7 +311,12 @@ export function buildGenerateImageTool(
         });
         throwIfAborted(ioSignal);
 
-        const src = await persist({ result, stageId, signal: ioSignal });
+        const src = await persist({
+          result,
+          stageId,
+          assetPrincipal: deps.assetPrincipal,
+          signal: ioSignal,
+        });
         throwIfAborted(ioSignal);
         void recordGenerationUsage({
           kind: 'image',

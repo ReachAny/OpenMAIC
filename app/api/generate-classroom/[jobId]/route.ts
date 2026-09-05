@@ -6,6 +6,12 @@ import {
 } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
+import {
+  authorizeOpenMaicRequest,
+  markPrivateNoStore,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 
 const log = createLogger('ClassroomJob API');
 
@@ -21,27 +27,55 @@ export async function GET(req: NextRequest, context: { params: Promise<{ jobId: 
       return apiError('INVALID_REQUEST', 400, 'Invalid classroom generation job id');
     }
 
+    let authorization;
+    try {
+      authorization = await authorizeOpenMaicRequest(req);
+    } catch (error) {
+      return markPrivateNoStore(openMaicAuthorizationResponse(error));
+    }
+
+    let checkpoint;
+    try {
+      checkpoint = await createOpenMaicJobAuthorizationManager().checkpoint('classroom', jobId);
+    } catch {
+      return markPrivateNoStore(
+        apiError('INVALID_REQUEST', 404, 'Classroom generation job not found'),
+      );
+    }
+    if (
+      checkpoint.lease.sessionId !== authorization.sessionId ||
+      checkpoint.lease.stageId !== authorization.grant.stageId
+    ) {
+      return markPrivateNoStore(
+        apiError('INVALID_REQUEST', 404, 'Classroom generation job not found'),
+      );
+    }
+
     const job = await readClassroomGenerationJob(jobId);
     if (!job) {
-      return apiError('INVALID_REQUEST', 404, 'Classroom generation job not found');
+      return markPrivateNoStore(
+        apiError('INVALID_REQUEST', 404, 'Classroom generation job not found'),
+      );
     }
 
     const pollUrl = `${buildRequestOrigin(req)}/api/generate-classroom/${jobId}`;
 
-    return apiSuccess({
-      jobId: job.id,
-      status: job.status,
-      step: job.step,
-      progress: job.progress,
-      message: job.message,
-      pollUrl,
-      pollIntervalMs: 5000,
-      scenesGenerated: job.scenesGenerated,
-      totalScenes: job.totalScenes,
-      result: job.result,
-      error: job.error,
-      done: job.status === 'succeeded' || job.status === 'failed',
-    });
+    return markPrivateNoStore(
+      apiSuccess({
+        jobId: job.id,
+        status: job.status,
+        step: job.step,
+        progress: job.progress,
+        message: job.message,
+        pollUrl,
+        pollIntervalMs: 5000,
+        scenesGenerated: job.scenesGenerated,
+        totalScenes: job.totalScenes,
+        result: job.result,
+        error: job.error,
+        done: job.status === 'succeeded' || job.status === 'failed' || job.status === 'aborted',
+      }),
+    );
   } catch (error) {
     log.error(`Classroom job retrieval failed [jobId=${resolvedJobId ?? 'unknown'}]:`, error);
     return apiError(

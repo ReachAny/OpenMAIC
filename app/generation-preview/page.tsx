@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, Suspense, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'motion/react';
 import { CheckCircle2, Sparkles, AlertCircle, AlertTriangle, ArrowLeft, Bot } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,9 @@ import { Card } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { OutlinesEditor } from '@/components/generation/outlines-editor';
 import { cn } from '@/lib/utils';
+import { activeStageHeaders } from '@/lib/persistence/active-stage';
+import { resolveStageId } from '@/lib/stage-id';
+import { hrefWithWorkspaceContext, readWorkspaceContext } from '@/lib/workbench/workspace-panes';
 import { useStageStore } from '@/lib/store/stage';
 import { useSettingsStore } from '@/lib/store/settings';
 import { useAgentRegistry } from '@/lib/orchestration/registry/store';
@@ -34,6 +37,7 @@ import {
   storeImages,
 } from '@/lib/utils/image-storage';
 import { getCurrentModelConfig } from '@/lib/utils/model-config';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
 import { resolveSessionDocumentSources } from '@/lib/document/session-sources';
 import { MAX_VISION_IMAGES } from '@/lib/constants/generation';
 import {
@@ -43,7 +47,6 @@ import {
   type ParsedDocumentPart,
 } from '@/lib/document/bundle';
 import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
-import { nanoid } from 'nanoid';
 import type { GeneratedAgentConfig, Stage } from '@/lib/types/stage';
 import type {
   SceneOutline,
@@ -100,7 +103,14 @@ type SceneGenerationFailure = {
 
 function GenerationPreviewContent() {
   const router = useRouter();
+  // The stage id in the URL is what client persistence turns into
+  // `x-openmaic-stage-id`, so it — not the sessionStorage copy — decides which
+  // grant every write on this page is authorized against. Reading the document
+  // id from the same place keeps the two in agreement across a refresh.
+  const searchParams = useSearchParams();
+  const hostReturnUrl = useOpenMaicHostReturnUrl(searchParams.get('stageId'));
   const { t } = useI18n();
+  const backLabel = hostReturnUrl ? t('workbench.launch.openMaicBack') : t('generation.backToHome');
   const hasStartedRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const outlineReviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,6 +267,11 @@ function GenerationPreviewContent() {
     const imageProviderConfig = settings.imageProvidersConfig?.[settings.imageProviderId];
     const videoProviderConfig = settings.videoProvidersConfig?.[settings.videoProviderId];
     return {
+      // Bind generation to THIS stage's grant — see the same note in
+      // `lib/hooks/use-scene-generator.ts`. On this page the id comes from
+      // `?stageId=`, which the generation entry carries over precisely so the
+      // whole flow stays on one stage.
+      ...activeStageHeaders(),
       'Content-Type': 'application/json',
       'x-model': modelConfig.modelString,
       'x-api-key': modelConfig.apiKey,
@@ -530,8 +545,10 @@ function GenerationPreviewContent() {
         imageMapping = currentSession.imageMapping;
       }
 
-      // Create stage client-side
-      const stageId = nanoid(10);
+      // Create stage client-side, unless an embedding host pinned the id up front.
+      const stageId = resolveStageId(
+        searchParams.get('stageId') ?? currentSession.requestedStageId ?? undefined,
+      );
       const stage: Stage = {
         id: stageId,
         name: extractTopicFromRequirement(currentSession.requirements.requirement),
@@ -1049,7 +1066,15 @@ function GenerationPreviewContent() {
 
       sessionStorage.removeItem('generationSession');
       await store.saveToStorage();
-      router.push(`/classroom/${stage.id}`);
+      // The launch context follows the deck into the classroom: the stage id
+      // keeps persistence bound to this grant, and the requested mode is the
+      // host saying whether it launched the teacher to author or to watch.
+      router.push(
+        hrefWithWorkspaceContext(
+          `/classroom/${encodeURIComponent(stage.id)}`,
+          readWorkspaceContext(searchParams),
+        ),
+      );
     } catch (err) {
       setIsOutlineStreaming(false);
       // AbortError is expected when navigating away — don't show as error
@@ -1075,7 +1100,8 @@ function GenerationPreviewContent() {
     clearOutlineReviewTimer();
     outlineReviewIntentRef.current = false;
     sessionStorage.removeItem('generationSession');
-    router.push('/');
+    if (hostReturnUrl) globalThis.location.assign(hostReturnUrl);
+    else router.push('/');
   };
 
   // Triggered when the user clicks the streaming outline card mid-stream.
@@ -1210,7 +1236,7 @@ function GenerationPreviewContent() {
             <p className="text-sm text-muted-foreground">{t('generation.sessionNotFoundDesc')}</p>
             <Button onClick={() => router.push('/')} className="w-full">
               <ArrowLeft className="size-4 mr-2" />
-              {t('generation.backToHome')}
+              {backLabel}
             </Button>
           </div>
         </Card>
@@ -1242,7 +1268,7 @@ function GenerationPreviewContent() {
         >
           <Button variant="ghost" size="sm" onClick={goBackToHome} disabled={isConfirmingOutlines}>
             <ArrowLeft className="size-4 mr-2" />
-            {t('generation.backToHome')}
+            {backLabel}
           </Button>
         </motion.div>
 
@@ -1324,7 +1350,7 @@ function GenerationPreviewContent() {
       >
         <Button variant="ghost" size="sm" onClick={goBackToHome}>
           <ArrowLeft className="size-4 mr-2" />
-          {t('generation.backToHome')}
+          {backLabel}
         </Button>
       </motion.div>
 

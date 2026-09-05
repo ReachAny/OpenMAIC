@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { StageMode } from '@/lib/types/stage';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
 import { classroomExitLabelKey, exitClassroom } from '@/lib/workbench/classroom-exit';
 import { HeaderControls } from './stage/header-controls';
 
@@ -45,7 +46,8 @@ export function Header({
   const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const exitLabel = t(classroomExitLabelKey(searchParams));
+  const hostReturnUrl = useOpenMaicHostReturnUrl();
+  const exitLabel = t(classroomExitLabelKey(searchParams, hostReturnUrl));
 
   return (
     <>
@@ -55,7 +57,7 @@ export function Header({
             ? null
             : (backControl ?? (
                 <button
-                  onClick={() => exitClassroom(router, searchParams)}
+                  onClick={() => exitClassroom(router, searchParams, hostReturnUrl)}
                   className="shrink-0 p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
                   title={exitLabel}
                   aria-label={exitLabel}

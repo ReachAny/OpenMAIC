@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   recordGenerationUsage: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
   writeFile: vi.fn().mockResolvedValue(undefined),
+  putServerAssetBytes: vi.fn().mockResolvedValue('ast_persisted-image'),
   log: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
@@ -14,6 +15,9 @@ vi.mock('@/lib/server/usage-storage', () => ({
   recordGenerationUsage: mocks.recordGenerationUsage,
 }));
 vi.mock('node:fs', () => ({ promises: { mkdir: mocks.mkdir, writeFile: mocks.writeFile } }));
+vi.mock('@/lib/server/server-asset-bytes', () => ({
+  putServerAssetBytes: mocks.putServerAssetBytes,
+}));
 vi.mock('@/lib/server/ssrf-guard', () => ({ validateUrlForSSRF: async () => null }));
 vi.mock('@/lib/logger', () => ({ createLogger: () => mocks.log }));
 
@@ -68,6 +72,7 @@ describe('generate_image tool', () => {
   it('fails loudly when no server image provider is configured', async () => {
     const tool = buildGenerateImageTool({
       sessionId: 'session-owner',
+      assetPrincipal: 'reachacademy:org:org-a:course:course-a',
       getConfiguredProviders: () => ({}),
     });
 
@@ -142,6 +147,7 @@ describe('generate_image tool', () => {
     const generateConfiguredImage = vi.fn().mockResolvedValue(generated);
     const tool = buildGenerateImageTool({
       sessionId: 'session-owner',
+      assetPrincipal: 'reachacademy:org:org-a:course:course-a',
       getConfiguredProviders: () => ({ 'openai-image': { models: ['gpt-image-1'] } }),
       resolveProviderConfig: () => ({
         providerId: 'openai-image',
@@ -180,9 +186,12 @@ describe('generate_image tool', () => {
         signal: expect.any(AbortSignal),
       }),
     );
-    expect(mocks.writeFile).toHaveBeenCalledWith(
-      expect.stringMatching(/stage-owner\/media\/generated-[a-f0-9]{64}\.png$/),
-      Buffer.from('real-image-bytes'),
+    expect(mocks.putServerAssetBytes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: 'reachacademy:org:org-a:course:course-a',
+        bytes: Buffer.from('real-image-bytes'),
+        mime: 'image/png',
+      }),
     );
     // Success details are provider-neutral: no provider id leaks into the
     // transcript. The vendor choice stays in the server-side log, correlated
@@ -190,9 +199,7 @@ describe('generate_image tool', () => {
     // classroom-media path (the agent runtime has no request origin), which
     // the browser resolves against the page origin.
     expect(result.details).toEqual({
-      src: expect.stringMatching(
-        /^\/api\/classroom-media\/stage-owner\/media\/generated-[a-f0-9]{64}\.png$/,
-      ),
+      src: 'ast_persisted-image',
       width: 1024,
       height: 576,
     });
@@ -234,12 +241,16 @@ describe('generate_image tool', () => {
       defaultPersistGeneratedImage({
         result: { url: 'https://cdn.example.com/generated/photo.jpg', width: 1024, height: 576 },
         stageId: 'stage-owner',
+        assetPrincipal: 'reachacademy:org:org-a:course:course-a',
         signal: new AbortController().signal,
       }),
-    ).resolves.toMatch(/^\/api\/classroom-media\/stage-owner\/media\//);
-    expect(mocks.writeFile).toHaveBeenCalledWith(
-      expect.stringMatching(/\.jpg$/),
-      Buffer.from('real-image-bytes'),
+    ).resolves.toBe('ast_persisted-image');
+    expect(mocks.putServerAssetBytes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: 'reachacademy:org:org-a:course:course-a',
+        bytes: Buffer.from('real-image-bytes'),
+        mime: 'image/jpeg',
+      }),
     );
   });
 

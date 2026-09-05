@@ -20,6 +20,8 @@ import { NextRequest } from 'next/server';
 import { recordGenerationUsage } from '@/lib/server/usage-storage';
 import { generateVideo, normalizeVideoOptions } from '@/lib/media/video-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveVideoApiKey,
@@ -31,12 +33,15 @@ import type { VideoProviderId, VideoGenerationOptions } from '@/lib/media/types'
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('VideoGeneration API');
 
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   try {
     const body = (await request.json()) as VideoGenerationOptions;
 
@@ -51,6 +56,7 @@ export async function POST(request: NextRequest) {
     if (!providerId) {
       return apiError('MISSING_PROVIDER', 400, 'No video provider configured');
     }
+    assertReachAnyProviderAllowed('video', providerId);
     // Enforce server precedence: a force-disabled provider is off for everyone,
     // regardless of any client key/selection — mirror the TTS contract (#665).
     if (isServerProviderDisabled('video', providerId)) {
@@ -85,6 +91,7 @@ export async function POST(request: NextRequest) {
     // first pinned entry is the managed default; unmanaged providers use the
     // client header directly.
     const model = resolveVideoModel(providerId, clientModel);
+    await assertReachAnyManagedModelAllowed('video_generation', 'video', providerId, model);
     if (!model) {
       return apiError(
         'MISSING_MODEL',
@@ -119,6 +126,9 @@ export async function POST(request: NextRequest) {
     return apiSuccess({ result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, message);
+    }
     // Detect content safety filter rejections (e.g. Seedance SensitiveContent errors)
     if (message.includes('SensitiveContent') || message.includes('sensitive information')) {
       log.warn(`Video blocked by content safety filter: ${message}`);

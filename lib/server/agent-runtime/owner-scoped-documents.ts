@@ -9,6 +9,7 @@ import type { AppStage } from '@/lib/document-store/persistence-types';
 import { validateAppScene, validateAppStage } from '@/lib/document-store/validators';
 import { createOwnerBoundDocumentStore } from '@/lib/persistence/owner-bound-document-store';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
 import type { AppScene } from '@/lib/types/stage';
 import type { Queryable } from '@openmaic/storage/document/pg';
 
@@ -36,7 +37,9 @@ export async function getOwnerScopedDocumentStore(
   ownerId: string,
   mutationFence?: (queryable: Queryable) => Promise<void>,
 ): Promise<OwnerScopedDocumentStore> {
-  const { pool } = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
+  const { pool } = await getServerPersistenceProvider(
+    stageConnectionString(process.env.DATABASE_URL ?? '', 'draft'),
+  );
   return withPlainJsonDocumentWrites(
     createOwnerBoundDocumentStore<AppScene, AppStage>({
       pool,

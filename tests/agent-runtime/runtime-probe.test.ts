@@ -29,20 +29,17 @@ describe('agent runtime probe', () => {
   });
 
   it.each([
-    ['the runtime flag is off (the no-DB default)', undefined, undefined, false, false],
-    ['the runtime is on but DATABASE_URL is absent', 'true', undefined, false, true],
-    ['the runtime is on and DATABASE_URL is set', 'true', 'postgres://runtime', true, true],
-  ])(
-    'reports %s as { enabled: %s, runtimeEnabled: %s }',
-    async (_case, runtimeFlag, databaseUrl, enabled, runtimeEnabled) => {
-      if (runtimeFlag !== undefined) process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = runtimeFlag;
-      if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
+    ['DATABASE_URL is absent', undefined, undefined, false],
+    ['the retired flag is set without DATABASE_URL', 'true', undefined, false],
+    ['DATABASE_URL is set without the retired flag', undefined, 'postgres://runtime', true],
+    ['DATABASE_URL is set with the retired flag off', 'false', 'postgres://runtime', true],
+  ])('reports %s as database readiness %s', async (_case, runtimeFlag, databaseUrl, ready) => {
+    if (runtimeFlag !== undefined) process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = runtimeFlag;
+    if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
 
-      // `enabled` is usability: it must be true only when the runtime can
-      // actually serve a request. `runtimeEnabled` is the raw intent flag, so
-      // "off by choice" (false/false) is distinguishable from "on but
-      // unusable" (false/true).
-      await expect((await GET()).json()).resolves.toEqual({ enabled, runtimeEnabled });
-    },
-  );
+    await expect((await GET()).json()).resolves.toEqual({
+      enabled: ready,
+      runtimeEnabled: ready,
+    });
+  });
 });

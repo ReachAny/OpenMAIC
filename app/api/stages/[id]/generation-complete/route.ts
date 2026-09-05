@@ -20,10 +20,11 @@ type Params = { params: Promise<{ id: string }> };
 export async function POST(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
-  return withRequestOwnerId(req, async (ownerId, responseHeaders) => {
+  return withRequestOwnerId(req, async (ownerId, responseHeaders, authorization) => {
+    const stage = authorization.grant.stage;
     const { id: stageId } = await params;
     try {
-      const access = await resolveStageAccess(stageId);
+      const access = await resolveStageAccess(stageId, await getStageAccessDb(stage));
 
       // Absent and tombstoned are the same 404 — the caller must not learn
       // that an id used to be a real course, and a deleted course has no
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: responseHeaders });
       }
 
-      const db = await getStageAccessDb();
+      const db = await getStageAccessDb(stage);
       const touched = await markStageGenerationComplete(db, stageId);
 
       if (!touched) {

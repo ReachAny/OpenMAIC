@@ -5,7 +5,7 @@ import { EditShell } from '@/components/edit/EditShell';
 import { SlideNavRail } from '@/components/edit/SlideNavRail';
 import { EditDock } from '@/components/edit/EditDock/EditDock';
 import { HeaderControls } from '@/components/stage/header-controls';
-import { isMaicEditorEnabled } from '@/lib/config/feature-flags';
+import { useOpenMaicCapabilities } from '@/lib/reachacademy/bridge/client-capabilities';
 import { preloadEditor } from '@/lib/edit/preload-editor';
 import { sceneEditorRegistry } from '@/lib/edit/scene-editor-registry';
 import { getScenePagerState } from '@/lib/edit/scene-pager';
@@ -13,6 +13,7 @@ import { useStageStore } from '@/lib/store/stage';
 import { useInWorkbenchPanel } from '@/lib/workbench/panel-context';
 import { supportsNarrationTimeline } from './scene-timeline';
 import type { Scene } from '@/lib/types/stage';
+import { SceneProvider } from '@/lib/contexts/scene-context';
 
 interface EditChromeRootProps {
   readonly scene: Scene;
@@ -42,6 +43,8 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
   // conversation on the left is its successor — the agent it would talk to
   // is the one building this course).
   const inWorkbenchPanel = useInWorkbenchPanel();
+  const stageId = useStageStore.use.stage()?.id;
+  const bridgeCapabilities = useOpenMaicCapabilities(stageId);
 
   // Deck paging (‹ n/m ›). Same state source and setter the SlideNavRail
   // thumbnails use — `currentSceneId` / `setCurrentSceneId` — so flipping pages
@@ -103,25 +106,29 @@ export function EditChromeRoot({ scene, isEditable, onToggleEditMode }: EditChro
     <HeaderControls
       mode="edit"
       canEdit={isEditable}
-      onToggleEditMode={isMaicEditorEnabled() && !inWorkbenchPanel ? onToggleEditMode : undefined}
+      onToggleEditMode={
+        bridgeCapabilities?.documentWrite && !inWorkbenchPanel ? onToggleEditMode : undefined
+      }
     />
   );
 
   return (
-    <EditShell
-      scene={scene}
-      leftRail={<SlideNavRail />}
-      bottomRail={
-        timelineEnabled ? (
-          <EditDock sceneId={scene.id} sceneType={scene.type} pager={pager} />
-        ) : undefined
-      }
-      commandTrailing={headerControls}
-      // The pager normally lives in the dock's global edit bar (handed to `EditDock`
-      // above). Only a scene type that gets no dock at all keeps the floating
-      // form — otherwise those scenes would lose paging entirely.
-      pager={timelineEnabled ? undefined : pager}
-      hideCommandBar={inWorkbenchPanel}
-    />
+    <SceneProvider>
+      <EditShell
+        scene={scene}
+        leftRail={<SlideNavRail />}
+        bottomRail={
+          timelineEnabled ? (
+            <EditDock sceneId={scene.id} sceneType={scene.type} pager={pager} />
+          ) : undefined
+        }
+        commandTrailing={headerControls}
+        // The pager normally lives in the dock's global edit bar (handed to `EditDock`
+        // above). Only a scene type that gets no dock at all keeps the floating
+        // form — otherwise those scenes would lose paging entirely.
+        pager={timelineEnabled ? undefined : pager}
+        hideCommandBar={inWorkbenchPanel}
+      />
+    </SceneProvider>
   );
 }

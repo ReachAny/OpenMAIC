@@ -15,14 +15,20 @@ import {
   type DocumentAccess,
 } from '@/lib/persistence/document-access';
 import { createOwnerBoundDocumentStore } from '@/lib/persistence/owner-bound-document-store';
-import { authenticatePersistenceRequest } from '@/lib/persistence/server-auth';
 import {
   getServerPersistenceProvider,
   type PersistencePoolFactory,
 } from '@/lib/persistence/server-provider';
 import { readStageMeta } from '@/lib/persistence/stage-meta';
 import { APP_RUNTIME_PAYLOAD_VALIDATORS } from '@/lib/runtime/payload-validators';
-import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+import {
+  authorizeOpenMaicRequest,
+  markPrivateNoStore,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
+import type { OpenMaicRedisStore } from '@/lib/reachacademy/bridge/redis';
+import type { OpenMaicStageGrantV1 } from '@/lib/reachacademy/bridge/contracts';
 
 export const runtime = 'nodejs';
 
@@ -78,7 +84,8 @@ function indirectEgressWithinGrace(
 
 async function createPersistenceHandler(
   connectionString: string,
-  ownerId: string,
+  coursePrincipal: string,
+  learnerKey: string,
   access: DocumentAccess,
   poolFactory?: PersistencePoolFactory,
 ): Promise<RequestListener> {
@@ -88,15 +95,10 @@ async function createPersistenceHandler(
   );
   const documentStore = createOwnerBoundDocumentStore({
     pool,
-    ownerId,
+    ownerId: coursePrincipal,
     validateScene: validateAppScene,
     validateStage: validateAppStage,
   });
-  // Runtime and asset requests retain the development authenticator, which
-  // takes their partition key from a client-supplied header. Document requests
-  // use the server-resolved anonymous owner below. Before runtime or asset
-  // routes carry production data, their authenticator must also be replaced
-  // with real session verification.
   // Reclamation is not scheduled from here, and must not be: a route module
   // has no once-per-process guarantee and no shutdown hook. AssetCollector
   // runs from instrumentation.ts instead, over the byte store this same
@@ -106,10 +108,7 @@ async function createPersistenceHandler(
     configuredAssetByteEgress(process.env.ASSET_BYTE_EGRESS),
   );
   return createStorageHttpHandler(runtimeStore, documentStore, {
-    authenticate: async (request) =>
-      request.url?.startsWith('/documents')
-        ? { learnerKey: ownerId }
-        : authenticatePersistenceRequest(request),
+    authenticate: async () => ({ key: coursePrincipal, learnerKey }),
     authorizeMerge: async () => false,
     authorizeAdmin: async () => false,
     authorizeDocuments: async () => access === 'allow',
@@ -136,9 +135,11 @@ function nodeRequest(request: Request): IncomingMessage {
         request.body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
       )
     : Readable.from([]);
+  const search = new URLSearchParams(url.search);
+  search.delete('stage');
   return Object.assign(body, {
     method: request.method,
-    url: `${pathname}${url.search}`,
+    url: `${pathname}${search.toString() === '' ? '' : `?${search.toString()}`}`,
     headers: Object.fromEntries(request.headers.entries()),
   }) as IncomingMessage;
 }
@@ -173,6 +174,56 @@ function responseCallback(
 
 function suppressesResponseBody(request: Request, status: number): boolean {
   return request.method === 'HEAD' || status === 204 || status === 205 || status === 304;
+}
+
+function isDocumentListRequest(request: Request): boolean {
+  if (request.method.toUpperCase() !== 'GET') return false;
+  const pathname = new URL(request.url).pathname;
+  const routePath = pathname.startsWith(ROUTE_PREFIX)
+    ? pathname.slice(ROUTE_PREFIX.length)
+    : pathname;
+  return routePath === '/documents' || routePath === '/documents/';
+}
+
+async function bindRuntimeRequest(
+  request: Request,
+  path: string,
+  grant: OpenMaicStageGrantV1,
+): Promise<Request | null> {
+  if (path !== '/runtime' && !path.startsWith('/runtime/')) return request;
+  const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
+  const stageIndex = parts.indexOf('stages') + 1;
+  if (stageIndex > 0 && parts[stageIndex] !== grant.stageId) return null;
+  const learnerIndex = parts.indexOf('learners') + 1;
+  if (learnerIndex > 0) {
+    if (!['GET', 'HEAD', 'DELETE'].includes(request.method)) return null;
+    parts[learnerIndex] = grant.learnerKey;
+  }
+  const url = new URL(request.url);
+  url.pathname = `${ROUTE_PREFIX}/${parts.map(encodeURIComponent).join('/')}`;
+
+  if (request.method === 'POST' && path === '/runtime/sessions') {
+    let body: unknown;
+    try {
+      body = await request.clone().json();
+    } catch {
+      return null;
+    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+    const headers = new Headers(request.headers);
+    headers.delete('content-length');
+    return new Request(url, {
+      method: request.method,
+      headers,
+      body: JSON.stringify({
+        ...(body as Record<string, unknown>),
+        stageId: grant.stageId,
+        learnerKey: grant.learnerKey,
+      }),
+    });
+  }
+  if (url.toString() === request.url) return request;
+  return new Request(url, { method: request.method, headers: request.headers });
 }
 
 function runNodeHandler(handler: RequestListener, request: Request): Promise<Response> {
@@ -262,6 +313,8 @@ function runNodeHandler(handler: RequestListener, request: Request): Promise<Res
 
 interface PersistenceRequestDeps {
   poolFactory?: PersistencePoolFactory;
+  redis?: OpenMaicRedisStore;
+  now?: number;
 }
 
 export async function handlePersistenceRequest(
@@ -272,54 +325,79 @@ export async function handlePersistenceRequest(
   if (!connectionString) {
     return jsonError(404, 'PERSISTENCE_NOT_CONFIGURED', 'server persistence not configured');
   }
-  if (!process.env.PERSISTENCE_DEV_TOKEN) {
-    return jsonError(
-      503,
-      'PERSISTENCE_DEV_TOKEN_MISSING',
-      'server persistence requires PERSISTENCE_DEV_TOKEN (development auth only)',
-    );
-  }
-
-  return withRequestOwnerId(request, async (ownerId, responseHeaders) => {
-    try {
-      const path = routeRelativePath(request);
-      const action = parseDocumentAction(request.method, path);
-      let access: DocumentAccess = 'allow';
-      if (path === '/documents' || path.startsWith('/documents/')) {
-        const { pool } = await getServerPersistenceProvider(connectionString, deps.poolFactory);
-        const queryable = pool;
-        access = await decideDocumentAccess(
-          action,
-          ownerId,
-          (stageId) => readStageMeta(queryable, stageId),
-          (stageId) =>
-            pool
-              .query('SELECT 1 FROM document_stages WHERE id = $1', [stageId])
-              .then((result) => result.rows.length > 0),
-          (stageId) => readStageMeta(queryable, stageId),
-        );
-      }
-
-      const response =
-        access === 'not-found'
-          ? jsonError(404, 'DOCUMENT_NOT_FOUND', '@openmaic/storage: document not found')
-          : await runNodeHandler(
-              await createPersistenceHandler(connectionString, ownerId, access, deps.poolFactory),
-              request,
-            );
-      for (const [name, value] of responseHeaders.entries()) response.headers.append(name, value);
-      return response;
-    } catch (error) {
-      console.error('Embedded persistence route initialization failed', error);
-      const response = jsonError(
-        500,
-        'PERSISTENCE_INIT_FAILED',
-        'server persistence initialization failed',
+  try {
+    const authorization = await authorizeOpenMaicRequest(request, {
+      store: deps.redis,
+      now: deps.now,
+    });
+    const path = routeRelativePath(request);
+    if (isDocumentListRequest(request)) {
+      return jsonError(
+        403,
+        'PERSISTENCE_DOCUMENT_LIST_DISABLED',
+        'document listing is disabled; address a document by stageId',
       );
-      for (const [name, value] of responseHeaders.entries()) response.headers.append(name, value);
-      return response;
     }
-  });
+    const stageConnection = stageConnectionString(connectionString, authorization.grant.stage);
+    const action = parseDocumentAction(request.method, path);
+    if (
+      action.kind !== 'unknown' &&
+      action.kind !== 'list' &&
+      action.stageId !== authorization.grant.stageId
+    ) {
+      return jsonError(403, 'OPENMAIC_STAGE_MISMATCH', 'request denied');
+    }
+    let access: DocumentAccess = 'allow';
+    if (path === '/documents' || path.startsWith('/documents/')) {
+      const { pool } = await getServerPersistenceProvider(stageConnection, deps.poolFactory);
+      const queryable = pool;
+      access = await decideDocumentAccess(
+        action,
+        authorization.grant.coursePrincipal,
+        (stageId) => readStageMeta(queryable, stageId),
+        (stageId) =>
+          pool
+            .query('SELECT 1 FROM document_stages WHERE id = $1', [stageId])
+            .then((result) => result.rows.length > 0),
+        (stageId) => readStageMeta(queryable, stageId),
+      );
+    }
+
+    const boundRequest = await bindRuntimeRequest(request, path, authorization.grant);
+    if (!boundRequest) return jsonError(403, 'OPENMAIC_STAGE_MISMATCH', 'request denied');
+    if (path.startsWith('/runtime/sessions/')) {
+      const sessionId = decodeURIComponent(path.split('/')[3] ?? '');
+      const { runtimeStore } = await getServerPersistenceProvider(
+        stageConnection,
+        deps.poolFactory,
+      );
+      const runtimeSession = sessionId ? await runtimeStore.getSession(sessionId) : undefined;
+      if (runtimeSession && runtimeSession.stageId !== authorization.grant.stageId) {
+        return jsonError(404, 'RUNTIME_SESSION_NOT_FOUND', 'request denied');
+      }
+    }
+    const response =
+      access === 'not-found'
+        ? jsonError(404, 'DOCUMENT_NOT_FOUND', '@openmaic/storage: document not found')
+        : await runNodeHandler(
+            await createPersistenceHandler(
+              stageConnection,
+              authorization.grant.coursePrincipal,
+              authorization.grant.learnerKey,
+              access,
+              deps.poolFactory,
+            ),
+            boundRequest,
+          );
+    return path === '/assets' || path.startsWith('/assets/')
+      ? markPrivateNoStore(response)
+      : response;
+  } catch (error) {
+    const denied = openMaicAuthorizationResponse(error);
+    if (denied.status !== 503) return denied;
+    console.error('Embedded persistence route initialization failed', error);
+    return jsonError(500, 'PERSISTENCE_INIT_FAILED', 'server persistence initialization failed');
+  }
 }
 
 export const GET = (request: Request) => handlePersistenceRequest(request);

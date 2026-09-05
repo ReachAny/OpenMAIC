@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { transcribeAudio } from '@/lib/audio/asr-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveASRApiKey,
@@ -12,11 +14,14 @@ import type { ASRProviderId } from '@/lib/audio/types';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 const log = createLogger('Transcription');
 
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let resolvedProviderId: string | undefined;
   let resolvedModelId: string | undefined;
   try {
@@ -44,6 +49,7 @@ export async function POST(req: NextRequest) {
     }
     resolvedProviderId = effectiveProviderId;
     resolvedModelId = modelId;
+    assertReachAnyProviderAllowed('asr', effectiveProviderId);
 
     // Enforce server precedence: a force-disabled provider is off for everyone,
     // regardless of any client key/selection — mirror the TTS contract (#665).
@@ -72,6 +78,12 @@ export async function POST(req: NextRequest) {
       apiKey: resolveASRApiKey(effectiveProviderId, managed ? undefined : apiKey || undefined),
       baseUrl: resolveASRBaseUrl(effectiveProviderId, clientBaseUrl),
     };
+    await assertReachAnyManagedModelAllowed(
+      'audio_transcription',
+      'asr',
+      effectiveProviderId,
+      config.modelId,
+    );
     // Reflect the resolved (possibly server-pinned) model in failure logs.
     resolvedModelId = config.modelId;
 
@@ -84,6 +96,9 @@ export async function POST(req: NextRequest) {
       `Transcription failed [provider=${resolvedProviderId ?? 'unknown'}, model=${resolvedModelId ?? 'default'}]:`,
       error,
     );
+    if (error instanceof Error && error.message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
+    }
     return apiError(
       'TRANSCRIPTION_FAILED',
       500,

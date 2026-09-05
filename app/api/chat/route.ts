@@ -20,6 +20,10 @@ import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { resolveModel } from '@/lib/server/resolve-model';
 import type { ThinkingConfig } from '@/lib/types/provider';
+import {
+  authorizeOpenMaicRequest,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
 const log = createLogger('Chat API');
 
 // Allow streaming responses up to 60 seconds
@@ -64,6 +68,17 @@ export async function POST(req: NextRequest) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: config.agentIds');
     }
 
+    const stageId =
+      req.headers.get('x-openmaic-stage-id') ||
+      (typeof body.storeState.stage?.id === 'string' ? body.storeState.stage.id : undefined);
+    if (!stageId) return apiError('INVALID_REQUEST', 400, 'A valid stage is required');
+    let bridgeAuthorization;
+    try {
+      bridgeAuthorization = await authorizeOpenMaicRequest(req, { stageId });
+    } catch (error) {
+      return openMaicAuthorizationResponse(error);
+    }
+
     const {
       model: languageModel,
       apiKey: resolvedApiKey,
@@ -90,11 +105,19 @@ export async function POST(req: NextRequest) {
     );
 
     // Use the native request signal for abort propagation
-    const signal = req.signal;
+    const requestController = new AbortController();
+    req.signal.addEventListener('abort', () => requestController.abort(), { once: true });
+    const signal = requestController.signal;
 
     // Create SSE stream
     const { readable, writable } = new TransformStream();
     const writer = writable.getWriter();
+    const grantExpiryTimer = setTimeout(
+      () => {
+        requestController.abort(new Error('authorization_expired'));
+      },
+      Math.max(0, bridgeAuthorization.grant.expiresAt - Date.now()),
+    );
 
     // Stream generation in background with heartbeat to prevent connection timeout
     const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -150,14 +173,25 @@ export async function POST(req: NextRequest) {
         }
 
         stopHeartbeat();
+        clearTimeout(grantExpiryTimer);
         await writer.close();
       } catch (error) {
         stopHeartbeat();
+        clearTimeout(grantExpiryTimer);
 
-        // If aborted, just close the writer silently
         if (signal.aborted) {
           log.info('Request aborted during streaming');
           try {
+            if (
+              signal.reason instanceof Error &&
+              signal.reason.message === 'authorization_expired'
+            ) {
+              const errorEvent: StatelessEvent = {
+                type: 'error',
+                data: { message: 'authorization_expired' },
+              };
+              await writer.write(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+            }
             await writer.close();
           } catch {
             /* already closed */

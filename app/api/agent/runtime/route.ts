@@ -12,10 +12,18 @@
  * DATABASE_URL).
  */
 import { isAgentRuntimeConfigured, isAgentRuntimeEnabled } from '@/lib/config/feature-flags';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
+export async function GET(request?: Request) {
+  // Next always supplies the request. The no-argument form is retained for
+  // the existing pure configuration probe tests, which never represent an
+  // HTTP invocation.
+  if (request) {
+    const auth = await requireOpenMaicRoute(request);
+    if ('response' in auth) return auth.response;
+  }
   // Intentionally no materials flag: isAgentMaterialsEnabled does not exist in
   // this repo (the materials routes gate on the runtime, like the stages).
   return Response.json({

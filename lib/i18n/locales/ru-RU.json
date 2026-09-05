@@ -992,6 +992,8 @@
     "deleteFolderConfirmRemove": "Папка и её курсы (включая историю чата) будут удалены.",
     "notFound": "Курс не найден",
     "notFoundDesc": "Этот курс не существует или был удалён.",
+    "authorizationRequired": "Не удаётся открыть курс OpenMAIC",
+    "authorizationRequiredDesc": "Сеанс входа или разрешение на курс истекло. Откройте курс снова из Teacher.",
     "backToHome": "На главную"
   },
   "upload": {

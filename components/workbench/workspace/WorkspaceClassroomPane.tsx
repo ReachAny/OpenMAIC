@@ -22,6 +22,7 @@ import { memo } from 'react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { cn } from '@/lib/utils/cn';
 import { ClassroomSurface } from '@/components/classroom/ClassroomSurface';
+import { OpenMaicPublishButton } from '@/components/reachacademy/openmaic-publish-button';
 import { useStageStore } from '@/lib/store/stage';
 import { useWorkbenchStore } from '@/lib/workbench/session-store';
 import { WorkbenchPanelProvider } from '@/lib/workbench/panel-context';
@@ -150,6 +151,12 @@ export const WorkspaceClassroomPane = memo(function WorkspaceClassroomPane({
             <Play className="size-3.5" aria-hidden="true" />
             {t('workspace.startLearning')}
           </button>
+          {/* Publish back to ReachAcademy from the workspace too, so a teacher
+              who authored in Pro never has to leave it to ship. Self-gating:
+              renders nothing without a writable draft grant. */}
+          <span className="ml-2 flex shrink-0 items-center">
+            <OpenMaicPublishButton variant="compact" />
+          </span>
         </header>
       )}
 

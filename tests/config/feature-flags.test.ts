@@ -38,21 +38,17 @@ describe('agent runtime configuration predicate', () => {
   });
 
   it.each([
-    ['the flag is off with no DATABASE_URL', undefined, undefined, false, false],
-    ['the flag is off with DATABASE_URL set', undefined, 'postgres://runtime', false, false],
-    ['the flag is on with no DATABASE_URL', 'true', undefined, true, false],
-    ['the flag is on with a blank DATABASE_URL', 'true', '   ', true, false],
-    ['the flag is on with DATABASE_URL set', 'true', 'postgres://runtime', true, true],
-  ])(
-    '%s: enabled = %s, configured = %s',
-    (_case, runtimeFlag, databaseUrl, enabled, configured) => {
-      if (runtimeFlag !== undefined) process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = runtimeFlag;
-      if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
+    ['no DATABASE_URL', undefined, undefined, false],
+    ['blank DATABASE_URL', 'true', '   ', false],
+    ['DATABASE_URL without the retired flag', undefined, 'postgres://runtime', true],
+    ['DATABASE_URL with the retired flag', 'false', 'postgres://runtime', true],
+  ])('%s', (_case, runtimeFlag, databaseUrl, ready) => {
+    if (runtimeFlag !== undefined) process.env.OPENMAIC_AGENT_RUNTIME_ENABLED = runtimeFlag;
+    if (databaseUrl !== undefined) process.env.DATABASE_URL = databaseUrl;
 
-      expect(isAgentRuntimeEnabled()).toBe(enabled);
-      expect(isAgentRuntimeConfigured()).toBe(configured);
-    },
-  );
+    expect(isAgentRuntimeEnabled()).toBe(ready);
+    expect(isAgentRuntimeConfigured()).toBe(ready);
+  });
 });
 
 describe('isMaicEditorEnabled', () => {
@@ -84,18 +80,8 @@ describe('isMaicEditorEnabled', () => {
     expect(isMaicEditorEnabled()).toBe(false);
   });
 
-  it("returns true for 'true'", () => {
+  it('ignores the retired editor flag', () => {
     process.env[FLAG] = 'true';
-    expect(isMaicEditorEnabled()).toBe(true);
-  });
-
-  it("returns true for '1'", () => {
-    process.env[FLAG] = '1';
-    expect(isMaicEditorEnabled()).toBe(true);
-  });
-
-  it("returns false for 'false'", () => {
-    process.env[FLAG] = 'false';
     expect(isMaicEditorEnabled()).toBe(false);
   });
 
@@ -104,16 +90,10 @@ describe('isMaicEditorEnabled', () => {
     expect(isMaicEditorEnabled()).toBe(false);
   });
 
-  it('is implied by the Pro workbench flag when its own flag is unset', () => {
+  it('ignores the retired Pro workbench flag', () => {
     delete process.env[FLAG];
     process.env[PRO_FLAG] = 'true';
-    expect(isMaicEditorEnabled()).toBe(true);
-  });
-
-  it('stays on under the Pro workbench flag even with its own flag set false', () => {
-    process.env[FLAG] = 'false';
-    process.env[PRO_FLAG] = 'true';
-    expect(isMaicEditorEnabled()).toBe(true);
+    expect(isMaicEditorEnabled()).toBe(false);
   });
 });
 

@@ -1,87 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { isAgentRuntimeConfigured, isProWorkbenchEnabled } from '@/lib/config/feature-flags';
+import { OPENMAIC_SESSION_COOKIE } from '@/lib/reachacademy/bridge/contracts';
+import { classifyOpenMaicApiRoute } from '@/lib/reachacademy/bridge/route-classification';
 
-/** Convert string to Uint8Array */
-function encode(str: string): Uint8Array {
-  return new TextEncoder().encode(str);
-}
-
-/** Convert ArrayBuffer to hex string */
-function bufToHex(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/** Verify an HMAC-signed token using Web Crypto API (Edge-compatible) */
-async function verifyToken(token: string, accessCode: string): Promise<boolean> {
-  const dotIndex = token.indexOf('.');
-  if (dotIndex === -1) return false;
-
-  const timestamp = token.substring(0, dotIndex);
-  const signature = token.substring(dotIndex + 1);
-
-  const keyData = encode(accessCode);
-  const key = await crypto.subtle.importKey(
-    'raw',
-    keyData.buffer as ArrayBuffer,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
+function denied(status: number): NextResponse {
+  return NextResponse.json(
+    { error: { code: 'OPENMAIC_REQUEST_DENIED', message: 'request denied' } },
+    { status },
   );
-
-  const data = encode(timestamp);
-  const expected = bufToHex(await crypto.subtle.sign('HMAC', key, data.buffer as ArrayBuffer));
-
-  // Constant-length comparison (not truly constant-time in JS, but sufficient here)
-  if (signature.length !== expected.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < signature.length; i++) {
-    mismatch |= signature.charCodeAt(i) ^ expected.charCodeAt(i);
-  }
-  return mismatch === 0;
 }
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-
-  // Return an actual server-side 404 when either half of the workbench is off.
-  // Edge middleware cannot reliably inspect server-only deployment variables,
-  // so it enforces the public gate and leaves the complete runtime/database
-  // check to Node. A Node-hosted middleware uses the same gate as startup.
-  const canInspectServerRuntime = process.env.NEXT_RUNTIME !== 'edge';
-  const workbenchEnabled =
-    isProWorkbenchEnabled() && (!canInspectServerRuntime || isAgentRuntimeConfigured());
-  if (!workbenchEnabled && (pathname === '/workbench' || pathname.startsWith('/workbench/'))) {
-    return new NextResponse('Not found', { status: 404 });
-  }
-
-  const accessCode = process.env.ACCESS_CODE;
-  if (!accessCode) {
-    return NextResponse.next();
-  }
-
-  // Whitelist: access-code endpoints, health check
-  if (pathname.startsWith('/api/access-code/') || pathname === '/api/health') {
-    return NextResponse.next();
-  }
-
-  // Check cookie — validate HMAC signature, not just existence
-  const cookie = request.cookies.get('openmaic_access');
-  if (cookie?.value && (await verifyToken(cookie.value, accessCode))) {
-    return NextResponse.next();
-  }
-
-  // API requests without valid cookie → 401
   if (pathname.startsWith('/api/')) {
-    return NextResponse.json(
-      { success: false, errorCode: 'INVALID_REQUEST', error: 'Access code required' },
-      { status: 401 },
-    );
+    const classification = classifyOpenMaicApiRoute(pathname, request.method);
+    if (!classification || classification.auth === 'retired') return denied(404);
+    if (
+      classification.auth === 'public' ||
+      classification.auth === 'launch-code' ||
+      classification.auth === 'renew-callback'
+    ) {
+      return NextResponse.next();
+    }
+    return request.cookies.has(OPENMAIC_SESSION_COOKIE) ? NextResponse.next() : denied(401);
   }
 
-  // Page requests → let through, frontend shows modal
+  const protectedPage =
+    pathname === '/' ||
+    pathname === '/workspace' ||
+    pathname.startsWith('/workspace/') ||
+    pathname.startsWith('/workbench/') ||
+    pathname.startsWith('/classroom/') ||
+    pathname.startsWith('/generation-preview');
+  if (protectedPage && !request.cookies.has(OPENMAIC_SESSION_COOKIE)) {
+    return new NextResponse('Unauthorized', { status: 401 });
+  }
   return NextResponse.next();
 }
 

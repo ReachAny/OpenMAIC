@@ -18,7 +18,7 @@ interface CollectorRecord {
 interface Harness {
   collect: ReturnType<typeof vi.fn>;
   collectors: CollectorRecord[];
-  ensureAssetSchema: ReturnType<typeof vi.fn>;
+  assertOpenMaicCatalogReady: ReturnType<typeof vi.fn>;
   pgByteStores: unknown[];
   loadS3AssetByteStore: ReturnType<typeof vi.fn>;
   pools: Array<{ end: ReturnType<typeof vi.fn> }>;
@@ -34,7 +34,7 @@ function mockStorage(collect: () => Promise<number>): Harness {
   const harness: Harness = {
     collect: vi.fn(collect),
     collectors: [],
-    ensureAssetSchema: vi.fn().mockResolvedValue(undefined),
+    assertOpenMaicCatalogReady: vi.fn().mockResolvedValue(undefined),
     pgByteStores: [],
     loadS3AssetByteStore: vi.fn().mockResolvedValue({ kind: 's3' }),
     pools: [],
@@ -51,8 +51,10 @@ function mockStorage(collect: () => Promise<number>): Harness {
     },
   }));
   vi.doMock('@openmaic/storage/asset/pg', () => ({
-    ensureAssetSchema: harness.ensureAssetSchema,
     PgAssetStore: class {},
+  }));
+  vi.doMock('@/lib/persistence/catalog-readiness', () => ({
+    assertOpenMaicCatalogReady: harness.assertOpenMaicCatalogReady,
   }));
   vi.doMock('@openmaic/storage/asset/pg-bytes', () => ({
     PgAssetByteStore: class {
@@ -125,7 +127,7 @@ describe('asset collector schedule', () => {
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
     expect(harness.collect).toHaveBeenCalledTimes(2);
 
-    expect(harness.ensureAssetSchema).toHaveBeenCalledTimes(1);
+    expect(harness.assertOpenMaicCatalogReady).toHaveBeenCalledTimes(1);
     expect(harness.collectors).toHaveLength(1);
     expect(harness.collectors[0]?.options.graceMs).toBe(60 * 60 * 1000);
     expect(info).toHaveBeenCalled();
@@ -188,7 +190,7 @@ describe('asset collector schedule', () => {
 
   it('retries preparation after it fails, rather than wedging the schedule', async () => {
     const harness = mockStorage(async () => 1);
-    harness.ensureAssetSchema
+    harness.assertOpenMaicCatalogReady
       .mockRejectedValueOnce(new Error('relation does not exist'))
       .mockResolvedValue(undefined);
     vi.stubEnv('DATABASE_URL', 'postgres://collector-prepare');
@@ -201,7 +203,7 @@ describe('asset collector schedule', () => {
 
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
     expect(harness.collect).toHaveBeenCalledTimes(1);
-    expect(harness.ensureAssetSchema).toHaveBeenCalledTimes(2);
+    expect(harness.assertOpenMaicCatalogReady).toHaveBeenCalledTimes(2);
     expect(error).toHaveBeenCalledTimes(1);
 
     error.mockRestore();
@@ -238,7 +240,7 @@ describe('asset collector schedule', () => {
     warn.mockRestore();
   });
 
-  it('reclaims through the S3 byte layer when a bucket is configured', async () => {
+  it('fails closed without starting a collector when S3 is configured', async () => {
     const harness = mockStorage(async () => 0);
     vi.stubEnv('DATABASE_URL', 'postgres://collector-s3');
     vi.stubEnv('ASSET_S3_BUCKET', '  asset-bucket  ');
@@ -246,11 +248,10 @@ describe('asset collector schedule', () => {
     schedule = await startSchedule();
     await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
 
-    // Deleting through the PostgreSQL byte layer while the request path wrote
-    // to S3 would drop the row and orphan the object permanently.
-    expect(harness.loadS3AssetByteStore).toHaveBeenCalledExactlyOnceWith('asset-bucket');
+    expect(schedule).toBeUndefined();
+    expect(harness.loadS3AssetByteStore).not.toHaveBeenCalled();
     expect(harness.pgByteStores).toHaveLength(0);
-    expect(harness.collectors[0]?.byteStore).toEqual({ kind: 's3' });
+    expect(harness.collectors).toEqual([]);
   });
 
   it('starts one schedule per process even if asked twice', async () => {
@@ -285,6 +286,38 @@ describe('instrumentation registration', () => {
     await register();
 
     expect(startAssetCollectorSchedule).toHaveBeenCalledOnce();
+  });
+
+  it('starts all database-backed executors without the retired runtime flag', async () => {
+    const startAssetCollectorSchedule = vi.fn();
+    const validateServerConfig = vi.fn();
+    const stopNotify = vi.fn().mockResolvedValue(undefined);
+    const startAgentEventNotifyBus = vi.fn(() => ({ stop: stopNotify }));
+    const stopAgent = vi.fn().mockResolvedValue(undefined);
+    const startAgentRunner = vi.fn(() => ({ stop: stopAgent }));
+    const stopExtraction = vi.fn().mockResolvedValue(undefined);
+    const startMaterialExtractionRunner = vi.fn(() => ({ stop: stopExtraction }));
+    vi.doMock('@/lib/persistence/asset-collector-schedule', () => ({
+      startAssetCollectorSchedule,
+    }));
+    vi.doMock('@/lib/server/config-validation', () => ({ validateServerConfig }));
+    vi.doMock('@/lib/server/agent-runtime/event-notify-bus', () => ({
+      startAgentEventNotifyBus,
+    }));
+    vi.doMock('@/lib/server/agent-runtime/runner', () => ({ startAgentRunner }));
+    vi.doMock('@/lib/server/material-extraction/runner', () => ({
+      startMaterialExtractionRunner,
+    }));
+    vi.stubEnv('NEXT_RUNTIME', 'nodejs');
+    vi.stubEnv('DATABASE_URL', 'postgres://runtime');
+    vi.stubEnv('OPENMAIC_AGENT_RUNTIME_ENABLED', '');
+
+    const { register } = await import('@/instrumentation');
+    await register();
+
+    expect(startAgentEventNotifyBus).toHaveBeenCalledOnce();
+    expect(startAgentRunner).toHaveBeenCalledOnce();
+    expect(startMaterialExtractionRunner).toHaveBeenCalledOnce();
   });
 
   it('does nothing on the Edge runtime', async () => {

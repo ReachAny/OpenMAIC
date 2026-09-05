@@ -175,11 +175,15 @@ export const ALIDOCMIND_MIMES: readonly string[] = [
   ...ALIDOCMIND_IMAGE_MIMES,
 ];
 
+/** ReachAny model-service V1 extraction is intentionally PDF-only. */
+export const REACHANY_DOCUMENT_MIMES: readonly string[] = [M.pdf];
+
 export const PROVIDER_SUPPORTED_MIME_TYPES: Record<string, readonly string[]> = {
   unpdf: [M.pdf],
   mineru: MINERU_SELFHOST_MIMES,
   'mineru-cloud': MINERU_CLOUD_MIMES,
   alidocmind: ALIDOCMIND_MIMES,
+  reachany: REACHANY_DOCUMENT_MIMES,
   'plain-text': PLAIN_TEXT_MIMES,
 };
 

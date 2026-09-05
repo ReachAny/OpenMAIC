@@ -992,6 +992,8 @@
     "ungrouped": "Non classés",
     "notFound": "Cours introuvable",
     "notFoundDesc": "Ce cours n’existe pas ou a été supprimé.",
+    "authorizationRequired": "Impossible d’ouvrir le cours OpenMAIC",
+    "authorizationRequiredDesc": "Votre session ou l’autorisation du cours a expiré. Revenez depuis Teacher.",
     "backToHome": "Retour à l’accueil"
   },
   "upload": {

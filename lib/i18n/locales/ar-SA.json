@@ -992,6 +992,8 @@
     "deleteFolderAndCourses_other": "حذف المجلد و {{count}} دورة",
     "notFound": "لم يتم العثور على الدورة",
     "notFoundDesc": "هذه الدورة غير موجودة أو تم حذفها.",
+    "authorizationRequired": "يتعذر فتح دورة OpenMAIC مؤقتًا",
+    "authorizationRequiredDesc": "انتهت صلاحية تسجيل الدخول أو تفويض الدورة. أعد الدخول من Teacher.",
     "backToHome": "العودة إلى الصفحة الرئيسية"
   },
   "upload": {

@@ -179,12 +179,8 @@ BEGIN
     v_scene_id := NEW.id;
   END IF;
   -- LOCK ORDER INVARIANT: SR row BEFORE the SCR row (see the header comment).
-  INSERT INTO document_stage_revision (stage_id, rev)
-  VALUES (v_stage_id, 1)
-  ON CONFLICT (stage_id) DO UPDATE SET rev = document_stage_revision.rev + 1;
-  INSERT INTO document_scene_revision (stage_id, scene_id, rev)
-  VALUES (v_stage_id, v_scene_id, 1)
-  ON CONFLICT (stage_id, scene_id) DO UPDATE SET rev = document_scene_revision.rev + 1;
+  EXECUTE format('INSERT INTO %I.document_stage_revision (stage_id, rev) VALUES ($1, 1) ON CONFLICT (stage_id) DO UPDATE SET rev = %I.document_stage_revision.rev + 1', TG_TABLE_SCHEMA, TG_TABLE_SCHEMA) USING v_stage_id;
+  EXECUTE format('INSERT INTO %I.document_scene_revision (stage_id, scene_id, rev) VALUES ($1, $2, 1) ON CONFLICT (stage_id, scene_id) DO UPDATE SET rev = %I.document_scene_revision.rev + 1', TG_TABLE_SCHEMA, TG_TABLE_SCHEMA) USING v_stage_id, v_scene_id;
   IF coalesce(current_setting('openmaic.suppress_stage_notify', true), '') <> 'on' THEN
     PERFORM pg_notify('openmaic_agent_event_wakeup', json_build_object('kind', 'stage', 'stageId', v_stage_id)::text);
   END IF;
@@ -201,9 +197,7 @@ BEGIN
   ELSE
     v_stage_id := NEW.id;
   END IF;
-  INSERT INTO document_stage_revision (stage_id, rev)
-  VALUES (v_stage_id, 1)
-  ON CONFLICT (stage_id) DO UPDATE SET rev = document_stage_revision.rev + 1;
+  EXECUTE format('INSERT INTO %I.document_stage_revision (stage_id, rev) VALUES ($1, 1) ON CONFLICT (stage_id) DO UPDATE SET rev = %I.document_stage_revision.rev + 1', TG_TABLE_SCHEMA, TG_TABLE_SCHEMA) USING v_stage_id;
   IF coalesce(current_setting('openmaic.suppress_stage_notify', true), '') <> 'on' THEN
     PERFORM pg_notify('openmaic_agent_event_wakeup', json_build_object('kind', 'stage', 'stageId', v_stage_id)::text);
   END IF;
@@ -509,7 +503,35 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
   }
 
   private async transaction<T>(body: (queryable: Queryable) => Promise<T>): Promise<T> {
-    return this.transactionHook(body);
+    return this.transactionHook(async (queryable) => {
+      // Existing v1 catalogs retain revision triggers. Suppress only their wakeups so
+      // the application can emit one transaction-bound notification after its writes.
+      await queryable.query("SET LOCAL openmaic.suppress_stage_notify = 'on'");
+      return body(queryable);
+    });
+  }
+
+  private async signalStageMutation(
+    queryable: Queryable,
+    stageId: string,
+    sceneIds: readonly string[] = [],
+  ): Promise<void> {
+    await queryable.query(
+      `INSERT INTO document_stage_revision (stage_id, rev) VALUES ($1, 1)
+       ON CONFLICT (stage_id) DO UPDATE SET rev = document_stage_revision.rev + 1`,
+      [stageId],
+    );
+    for (const sceneId of new Set(sceneIds)) {
+      await queryable.query(
+        `INSERT INTO document_scene_revision (stage_id, scene_id, rev) VALUES ($1, $2, 1)
+         ON CONFLICT (stage_id, scene_id)
+         DO UPDATE SET rev = document_scene_revision.rev + 1`,
+        [stageId, sceneId],
+      );
+    }
+    await queryable.query("SELECT pg_notify('openmaic_agent_event_wakeup', $1)", [
+      JSON.stringify({ kind: 'stage', stageId }),
+    ]);
   }
 
   private requireOwner(operation: string): string {
@@ -721,6 +743,10 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
       } else {
         await queryable.query('DELETE FROM document_outlines WHERE stage_id = $1', [stageId]);
       }
+      await this.signalStageMutation(queryable, stageId, [
+        ...sceneRows.map((scene) => scene.id),
+        ...existingScenes.rows.map((scene) => scene.id),
+      ]);
     });
   }
 
@@ -970,11 +996,23 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
 
   async deleteDocument(stageId: string): Promise<void> {
     if (!isPgQueryableKey(stageId)) return;
-    // One statement; both child tables are removed by their FK cascades.
-    await this.queryable.query(
-      `DELETE FROM document_stages WHERE id = $1 AND ${this.scopePredicate('', 2)}`,
-      this.scopeParams(stageId),
-    );
+    await this.transaction(async (queryable) => {
+      const scenes = await queryable.query<{ id: string }>(
+        'SELECT id FROM document_scenes WHERE stage_id = $1',
+        [stageId],
+      );
+      const deleted = await queryable.query<{ id: string }>(
+        `DELETE FROM document_stages WHERE id = $1 AND ${this.scopePredicate('', 2)} RETURNING id`,
+        this.scopeParams(stageId),
+      );
+      if (deleted.rows.length) {
+        await this.signalStageMutation(
+          queryable,
+          stageId,
+          scenes.rows.map((scene) => scene.id),
+        );
+      }
+    });
   }
 
   async putStage(stageId: string, stage: TStage): Promise<void> {
@@ -999,6 +1037,7 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
         throw this.currentVersionError('putStage into', stageId, stored);
       }
       await this.persistStage(queryable, stageRow);
+      await this.signalStageMutation(queryable, stageId);
     });
   }
 
@@ -1030,6 +1069,7 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
           encodeJson(scene, `document scene ${JSON.stringify(scene.id)}`),
         ],
       );
+      await this.signalStageMutation(queryable, stageId, [scene.id]);
     });
   }
 
@@ -1084,6 +1124,7 @@ export class PgDocumentStore<TScene extends SceneLike = Scene, TStage extends St
         stageId,
         sceneId,
       ]);
+      await this.signalStageMutation(queryable, stageId, [sceneId]);
     });
   }
 }

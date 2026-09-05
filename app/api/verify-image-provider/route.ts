@@ -17,6 +17,8 @@
 import { NextRequest } from 'next/server';
 import { IMAGE_PROVIDERS, testImageConnectivity } from '@/lib/media/image-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveImageApiKey,
@@ -28,6 +30,7 @@ import type { ImageProviderId } from '@/lib/media/types';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('VerifyImageProvider');
 
@@ -37,12 +40,15 @@ const log = createLogger('VerifyImageProvider');
 export const maxDuration = 30;
 
 export async function POST(request: NextRequest) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   try {
     const providerId = (request.headers.get('x-image-provider')?.trim() ||
       resolveServerImageProviderId()) as ImageProviderId;
     if (!providerId) {
       return apiError('MISSING_PROVIDER', 400, 'No image provider configured');
     }
+    assertReachAnyProviderAllowed('image', providerId);
     // Enforce server precedence: a force-disabled provider is off for everyone,
     // regardless of any client key/selection — mirror the TTS contract (#665).
     if (isServerProviderDisabled('image', providerId)) {
@@ -70,6 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     const model = resolveImageModel(providerId, clientModel);
+    await assertReachAnyManagedModelAllowed('image_generation', 'image', providerId, model);
     // Workflow-based providers (e.g. comfyui-image) have no model catalog and
     // need no model; everyone else must resolve one.
     if (!model && provider?.models && provider.models.length > 0) {

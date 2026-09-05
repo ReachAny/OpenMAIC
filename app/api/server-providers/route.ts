@@ -1,31 +1,28 @@
 import {
-  getServerProviders,
-  getServerTTSProviders,
-  getServerASRProviders,
+  getServerProviderCatalog,
   getServerPDFProviders,
-  getServerImageProviders,
-  getServerVideoProviders,
   getServerWebSearchProviders,
   getParallelSceneConcurrency,
+  isReachAnyManagedOnlyDeployment,
 } from '@/lib/server/provider-config';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('ServerProviders');
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   try {
     return apiSuccess({
-      providers: getServerProviders(),
-      tts: getServerTTSProviders(),
-      asr: getServerASRProviders(),
+      ...(await getServerProviderCatalog()),
       pdf: getServerPDFProviders(),
-      image: getServerImageProviders(),
-      video: getServerVideoProviders(),
       webSearch: getServerWebSearchProviders(),
       generation: {
         parallelSceneConcurrency: getParallelSceneConcurrency(),
       },
+      managedOnly: isReachAnyManagedOnlyDeployment(),
     });
   } catch (error) {
     log.error('Error fetching server providers:', error);

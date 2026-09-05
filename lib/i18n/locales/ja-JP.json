@@ -992,6 +992,8 @@
     "deleteFolderAndCourses_other": "フォルダと {{count}} 件のコースを削除",
     "notFound": "コースが見つかりません",
     "notFoundDesc": "このコースは存在しないか、すでに削除されています。",
+    "authorizationRequired": "OpenMAIC コースを開けません",
+    "authorizationRequiredDesc": "サインインまたはコースの認証が期限切れです。教師画面から再度開いてください。",
     "backToHome": "ホームに戻る"
   },
   "upload": {

@@ -8,6 +8,7 @@ import { searchWithSearxng } from './searxng';
 import { searchWithTavily } from './tavily';
 import type { WebSearchResult } from '@/lib/types/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from './types';
+import { searchReachAnyWeb } from '@/lib/server/reachany-model-gateway';
 
 export { formatSearchResultsAsContext } from './format';
 
@@ -71,6 +72,8 @@ export async function searchWeb(params: {
       return searchWithSearxng({ query, maxResults, baseUrl, ...abortOptions });
     case 'tavily':
       return searchWithTavily({ query, apiKey, maxResults, baseUrl, ...abortOptions });
+    case 'reachany':
+      return searchReachAnyWeb(query, { maxResults, signal }, { baseUrl, serviceToken: apiKey });
     default: {
       const exhaustive: never = providerId;
       throw new Error(`Unsupported web search provider: ${exhaustive}`);

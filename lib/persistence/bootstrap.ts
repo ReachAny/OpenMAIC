@@ -6,6 +6,7 @@ import {
   configureDocumentStorage,
   type DocumentStorageOptions,
 } from '@/lib/document-store/config';
+import { activeStageHeaders } from '@/lib/persistence/active-stage';
 import { assertRuntimeStorageConfigurable, configureRuntimeStorage } from '@/lib/runtime/config';
 import { getLearnerKey } from '@/lib/runtime/learner-key';
 
@@ -30,12 +31,7 @@ export function getPersistenceLearnerKey(): Promise<string> {
 
 export async function getPersistenceRequestHeaders(): Promise<Record<string, string>> {
   if (!isBrowserPersistenceEnabled()) return {};
-  const resolvedLearnerKey = await getPersistenceLearnerKey();
-  const token = process.env.NEXT_PUBLIC_PERSISTENCE_TOKEN;
-  return {
-    'x-learner-key': resolvedLearnerKey,
-    ...(token ? { authorization: `Bearer ${token}` } : {}),
-  };
+  return activeStageHeaders();
 }
 
 if (isBrowserPersistenceEnabled()) {

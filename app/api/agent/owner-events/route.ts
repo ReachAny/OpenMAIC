@@ -11,8 +11,11 @@ import type { PersistedOwnerSessionEvent } from '@openmaic/storage';
 import type { NextRequest } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
+import {
+  authorizeOpenMaicRequest,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
 import { subscribeAgentEventWakeup } from '@/lib/server/agent-runtime/event-notify-bus';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 
 export const runtime = 'nodejs';
@@ -46,7 +49,13 @@ export async function GET(req: NextRequest) {
   // created under authenticated identities would be unreachable by their own
   // owner.
   const responseHeaders = new Headers();
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(req, { allowAnyStageGrant: true });
+  } catch (error) {
+    return openMaicAuthorizationResponse(error);
+  }
+  const ownerId = authorization.grant.personalPrincipal;
   const store = await getAgentSessionStore();
 
   const url = new URL(req.url);
@@ -56,14 +65,17 @@ export async function GET(req: NextRequest) {
   const encoder = new TextEncoder();
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let grantExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeWakeup: (() => void) | null = null;
   let closed = false;
 
   const clearTimers = () => {
     if (pollTimer) clearTimeout(pollTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (grantExpiryTimer) clearTimeout(grantExpiryTimer);
     pollTimer = null;
     heartbeatTimer = null;
+    grantExpiryTimer = null;
     unsubscribeWakeup?.();
     unsubscribeWakeup = null;
   };
@@ -108,6 +120,23 @@ export async function GET(req: NextRequest) {
           // The request closed between the guard and close.
         }
       };
+
+      grantExpiryTimer = setTimeout(
+        () => {
+          if (closed) return;
+          write(
+            `event: authorization_expired\ndata: ${JSON.stringify({
+              type: 'authorization_expired',
+              stageId: authorization.grant.stageId,
+              action: 'renew_and_reconnect',
+              cursor: cursor.toString(),
+            })}\n\n`,
+          );
+          close();
+        },
+        Math.max(0, authorization.grant.expiresAt - Date.now()),
+      );
+      grantExpiryTimer.unref?.();
 
       const emitCaughtUp = (degraded = false) =>
         write(
@@ -317,7 +346,7 @@ export async function GET(req: NextRequest) {
   });
 
   responseHeaders.set('Content-Type', 'text/event-stream; charset=utf-8');
-  responseHeaders.set('Cache-Control', 'no-cache, no-transform');
+  responseHeaders.set('Cache-Control', 'private, no-store');
   responseHeaders.set('Connection', 'keep-alive');
   return new Response(stream, { headers: responseHeaders });
 }

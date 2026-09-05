@@ -1,0 +1,89 @@
+{
+  "now": 1787918400000,
+  "familyMarker": {
+    "v": 1,
+    "version": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+    "expiresAt": 1787925600000
+  },
+  "teacherDraft": {
+    "version": 1,
+    "state": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "sub": "teacher-subject",
+    "actorOrgId": "actor-org",
+    "contentOrgId": "content-org",
+    "courseId": "course-1",
+    "stageId": "stage-draft",
+    "stage": "draft",
+    "capabilities": [
+      "document.read",
+      "document.write",
+      "asset.read",
+      "asset.write",
+      "runtime.read",
+      "runtime.write",
+      "agent.read",
+      "agent.write",
+      "material.read",
+      "material.write",
+      "skill.read",
+      "skill.write",
+      "folder.read",
+      "folder.write",
+      "model.invoke",
+      "export.read",
+      "export.write"
+    ],
+    "role": "teacher",
+    "roleOrigin": "https://teacher.reach.example",
+    "family": {
+      "id": "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+      "version": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+      "expiresAt": 1787925600000
+    },
+    "iat": 1787918400000,
+    "launchExp": 1787918460000,
+    "coursePrincipal": "reachacademy:org:content-org:course:course-1",
+    "personalPrincipal": "reachacademy:subject:teacher-subject:org:actor-org",
+    "learnerKey": "reachacademy:subject:teacher-subject:course:course-1",
+    "authorizationRef": { "kind": "teacher-course" },
+    "returnTo": "https://teacher.reach.example/teacher/courses/course-1",
+    "nextPath": "/?stageId=stage-draft&mode=edit"
+  },
+  "studentPublished": {
+    "version": 1,
+    "state": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "sub": "student-subject",
+    "actorOrgId": "learner-org",
+    "contentOrgId": "content-org",
+    "courseId": "course-1",
+    "stageId": "stage-published",
+    "stage": "published",
+    "capabilities": [
+      "document.read",
+      "asset.read",
+      "runtime.read",
+      "runtime.write",
+      "agent.read",
+      "model.invoke.learner"
+    ],
+    "role": "student",
+    "roleOrigin": "https://student.reach.example",
+    "family": {
+      "id": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+      "version": "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV",
+      "expiresAt": 1787925600000
+    },
+    "iat": 1787918400000,
+    "launchExp": 1787918460000,
+    "coursePrincipal": "reachacademy:org:content-org:course:course-1",
+    "personalPrincipal": "reachacademy:subject:student-subject:org:learner-org",
+    "learnerKey": "reachacademy:subject:student-subject:course:course-1",
+    "authorizationRef": {
+      "kind": "student-attempt",
+      "selectionId": "selection-1",
+      "attemptId": "attempt-1"
+    },
+    "returnTo": "https://student.reach.example/student/today",
+    "nextPath": "/classroom/stage-published"
+  }
+}

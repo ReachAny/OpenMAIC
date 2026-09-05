@@ -28,11 +28,11 @@ Two distinct cases:
 Accurate topology (there is **no local-file backend**):
 
 - **Default:** browser-local storage (in-browser stores). Nothing leaves the device.
-- **Opt into server persistence:** set `NEXT_PUBLIC_PERSISTENCE=1` — see `lib/persistence/bootstrap.ts` (this runs **client-side**; when enabled, the browser switches to HTTP-backed `HttpRuntimeStore` / `HttpDocumentStore` / `HttpAssetStore` that call `/api/persistence`). `NEXT_PUBLIC_PERSISTENCE_TOKEN` optionally authenticates those calls.
+- **ReachAcademy persistence:** set `NEXT_PUBLIC_PERSISTENCE=1` — the browser switches to HTTP-backed stores that call `/api/persistence`; every request is authenticated by the HttpOnly OpenMAIC bridge session. `NEXT_PUBLIC_PERSISTENCE_TOKEN` and `PERSISTENCE_DEV_TOKEN` are retired and must not be configured.
 - **Server side:** the `/api/persistence` catch-all (`app/api/persistence/[...path]/route.ts`) persists **documents + runtime to PostgreSQL**, and **asset bytes to PostgreSQL or S3**. The byte-layer selection lives in `lib/persistence/asset-byte-store.ts` (`configuredS3Bucket` / `lazyAssetByteStore`) and is strictly three-way: **unset/empty** `ASSET_S3_BUCKET` ⇒ `PgAssetByteStore`; a **valid** bucket ⇒ S3; an **invalid** bucket name ⇒ asset operations **fail** — validation throws, there is no fallback to PG. (The failure isn't cached: the next asset request retries, and only asset traffic is affected — document/runtime requests keep working.)
 - The backends themselves come from `@openmaic/storage` subpaths (`@openmaic/storage/document/pg`, `@openmaic/storage/runtime/pg`, `@openmaic/storage/asset/pg-bytes`, `@openmaic/storage/asset/s3-bytes`) — see the storage table in [extend-sdk.md](extend-sdk.md).
 
-**Gotcha:** bootstrap is client-side and gated on `NEXT_PUBLIC_PERSISTENCE`; restart the dev server after changing `.env.local`. S3 additionally needs `@aws-sdk/client-s3` (optional peer of `@openmaic/storage`) installed in the app, and PG needs a reachable Postgres + the package's schema-ensure step.
+**Gotcha:** bootstrap is client-side and gated on `NEXT_PUBLIC_PERSISTENCE`; restart the dev server after changing environment configuration. S3 additionally needs `@aws-sdk/client-s3` (optional peer of `@openmaic/storage`) installed in the app; PG needs reachable deployment-provisioned catalogs and `/api/ready` import evidence.
 
 ## Task 3 — Branding / UI / Theme
 
@@ -77,6 +77,8 @@ This product still runs like the stock app; don't reinvent the startup steps:
 
 - Dev server / startup mode → [startup-modes.md](startup-modes.md).
 - Provider keys the running server needs → [provider-keys.md](provider-keys.md).
-- Verify with `GET {url}/api/health` (Phase 4), then confirm UI/route changes in the browser.
+- Verify liveness with `GET {url}/api/health` and deployment readiness with `GET {url}/api/ready`;
+  then confirm UI/route changes in the browser. Readiness remains 503 when import evidence is
+  absent, which is intentional until an authorized migration supplies it.
 
 Rebuild sequence when you touch `packages/@openmaic/*` source: consumers resolve to the built `dist/`, not `src/`, so rebuild the changed package (dependency order: `dsl → generation → storage → importer → renderer → editor`). `pnpm install`'s postinstall already does this in order; for a single package use its `pnpm run build`.

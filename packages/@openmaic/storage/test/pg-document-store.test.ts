@@ -390,7 +390,8 @@ describe('PgDocumentStore Postgres behavior', () => {
     await instrumented.saveDocument(replacement);
 
     expect(transactionCalls).toBe(1);
-    expect(sql[0]).toMatch(/document_stages[\s\S]*FOR UPDATE/);
+    expect(sql[0]).toBe("SET LOCAL openmaic.suppress_stage_notify = 'on'");
+    expect(sql[1]).toMatch(/document_stages[\s\S]*FOR UPDATE/);
     expect(sql.some((statement) => statement.includes('ON CONFLICT (id) DO UPDATE'))).toBe(true);
     expect(sql.some((statement) => statement.includes('DELETE FROM document_scenes'))).toBe(true);
     expect(sql.some((statement) => statement.includes('DELETE FROM document_outlines'))).toBe(true);
@@ -472,19 +473,32 @@ describe('PgDocumentStore Postgres behavior', () => {
     await expect(store.saveDocument(outlineLoss)).rejects.toThrow(/undefined member/i);
   });
 
-  test('deleteDocument is one direct statement and relies on FK cascades', async () => {
+  test('deleteDocument uses one transaction, FK cascades, and one application wakeup', async () => {
     await store.saveDocument(makeDocument());
     let transactionCalls = 0;
+    const sql: string[] = [];
     const directDeleteStore = new PgDocumentStore(db, {
       withTransaction: (body) => {
         transactionCalls += 1;
-        return db.transaction((tx: Queryable) => body(tx));
+        return db.transaction((tx: Queryable) =>
+          body({
+            async query<TRow extends Record<string, unknown> = Record<string, unknown>>(
+              text: string,
+              params?: unknown[],
+            ): Promise<QueryResult<TRow>> {
+              sql.push(text);
+              return tx.query<TRow>(text, params);
+            },
+          }),
+        );
       },
     });
 
     await directDeleteStore.deleteDocument('stage-1');
 
-    expect(transactionCalls).toBe(0);
+    expect(transactionCalls).toBe(1);
+    expect(sql[0]).toBe("SET LOCAL openmaic.suppress_stage_notify = 'on'");
+    expect(sql.filter((statement) => statement.includes('pg_notify'))).toHaveLength(1);
     expect((await db.query('SELECT * FROM document_scenes')).rows).toEqual([]);
     expect((await db.query('SELECT * FROM document_outlines')).rows).toEqual([]);
   });

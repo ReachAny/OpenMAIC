@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { AnimatePresence, motion } from 'motion/react';
 import { useStageStore } from '@/lib/store';
 import {
@@ -9,7 +9,7 @@ import {
   isHostedSceneEditable,
   resolveStageChromeMode,
 } from '@/lib/edit/stage-mode';
-import { isMaicEditorEnabled, isProWorkbenchEnabled } from '@/lib/config/feature-flags';
+import { useOpenMaicCapabilities } from '@/lib/reachacademy/bridge/client-capabilities';
 import { EditChromeRoot } from '@/components/edit/EditChromeRoot';
 import {
   PlaybackChromeRoot,
@@ -24,7 +24,7 @@ import { resolveClassroomBackControl } from '@/lib/workbench/classroom-back-cont
 import { resolveClassroomHeaderControls } from '@/lib/workbench/classroom-header-controls';
 import { useWorkbenchStore } from '@/lib/workbench/session-store';
 import { useWorkbenchPanelState } from '@/lib/workbench/panel-context';
-import { workspaceHref } from '@/lib/workbench/workspace-panes';
+import { readWorkspaceContext, workspaceHrefWithContext } from '@/lib/workbench/workspace-panes';
 import { exitProPlaybackToStandalone } from '@/lib/workbench/pro-playback-exit';
 
 /**
@@ -64,36 +64,22 @@ export function Stage({
 }) {
   const { mode, setMode, scenes, currentSceneId, generatingOutlines, stage } = useStageStore();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const enteringWorkbench = useRef(false);
-  const proWorkbenchFlag = isProWorkbenchEnabled();
-  const editorEnabled = isMaicEditorEnabled();
-  const [proRuntime, setProRuntime] = useState<'pending' | 'on' | 'off'>(
-    proWorkbenchFlag ? 'pending' : 'off',
-  );
-  useEffect(() => {
-    if (!proWorkbenchFlag) return;
-    let cancelled = false;
-    fetch('/api/agent/runtime')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (!cancelled) setProRuntime(body?.enabled === true ? 'on' : 'off');
-      })
-      .catch(() => {
-        if (!cancelled) setProRuntime('off');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [proWorkbenchFlag]);
-  const proWorkbenchEntry = proWorkbenchFlag && proRuntime === 'on';
+  const bridgeCapabilities = useOpenMaicCapabilities(stage?.id ?? classroomId);
+  const proWorkbenchFlag =
+    bridgeCapabilities?.documentWrite === true &&
+    bridgeCapabilities.agentRead &&
+    bridgeCapabilities.modelInvoke;
+  const editorEnabled = bridgeCapabilities?.documentWrite === true;
+  const proWorkbenchEntry = proWorkbenchFlag;
   const currentScene = useStageStore((s) => s.getCurrentScene());
   // The reference implementation makes editing owner-only. `isOwner` is true for the stage creator and
   // defaults to true with browser storage (single-user IndexedDB), so this gate is
   // a no-op upstream but hides Pro mode from visitors / bookmarked viewers in
   // server-backed mode — their saves would not pass the owner check anyway.
-  const isOwner = useStageStore((s) => s.isOwner);
   const readOnly = useStageStore((s) => s.readOnly);
-  const canEditOwnedStage = isOwner && !readOnly;
+  const canEditOwnedStage = bridgeCapabilities?.documentWrite === true && !readOnly;
 
   // Hosted by the Pro workspace's classroom pane. Ambient rather than a prop
   // because `Stage` is built by `ClassroomSurface`, which is mounted by both
@@ -259,11 +245,20 @@ export function Stage({
     enteringWorkbench.current = true;
     try {
       setPanelOpen(true, true);
-      router.replace(workspaceHref({ sessionId: null, courseId: stage.id }));
+      const context = readWorkspaceContext(searchParams);
+      router.replace(
+        workspaceHrefWithContext(
+          { sessionId: null, courseId: stage.id },
+          {
+            stageId: context.stageId ?? stage.id,
+            mode: context.mode ?? 'edit',
+          },
+        ),
+      );
     } finally {
       enteringWorkbench.current = false;
     }
-  }, [router, setPanelOpen, stage?.id]);
+  }, [router, searchParams, setPanelOpen, stage?.id]);
 
   const handleExitWorkbench = useCallback(async () => {
     if (!stage?.id) return;
@@ -286,7 +281,7 @@ export function Stage({
     ? workbenchPlayback
       ? handleExitWorkbench
       : undefined
-    : !isOwner || proRuntime === 'pending'
+    : !bridgeCapabilities?.documentWrite
       ? undefined
       : proWorkbenchEntry
         ? handleEnterWorkbench

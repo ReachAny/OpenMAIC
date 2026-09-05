@@ -95,6 +95,7 @@
 import type { TTSModelConfig } from './types';
 import { isCustomTTSProvider } from './types';
 import { isQwenCloneVoice, resolveTTSModelForVoice, TTS_PROVIDERS } from './constants';
+import { synthesizeReachAnySpeech } from '@/lib/server/reachany-model-gateway';
 import { downloadAudio, QwenVoiceCloneError, synthesizeQwenVoiceClone } from './qwen-voice-clone';
 import { evictQwenVoiceRegistrationMemo } from './qwen-voice-clone-registration';
 import { splitConcatenatedJsonObjects } from './json-stream';
@@ -218,6 +219,8 @@ export async function generateTTS(
   const signal = ttsRequestSignal(config.signal);
   try {
     switch (config.providerId) {
+      case 'reachany-tts':
+        return await generateReachAnyTTS(config, text, signal);
       case 'openai-tts':
         return await generateOpenAITTS(config, text, signal);
 
@@ -266,6 +269,24 @@ export async function generateTTS(
     }
     throw error;
   }
+}
+
+async function generateReachAnyTTS(
+  config: TTSModelConfig,
+  text: string,
+  signal: AbortSignal,
+): Promise<TTSGenerationResult> {
+  const result = await synthesizeReachAnySpeech(
+    {
+      text,
+      model: config.modelId || TTS_PROVIDERS['reachany-tts'].defaultModelId,
+      voice: config.voice || 'alloy',
+      speed: config.speed,
+      signal,
+    },
+    { baseUrl: config.baseUrl, serviceToken: config.apiKey },
+  );
+  return { audio: result.audio, format: getAudioResponseFormat(result.contentType) };
 }
 
 /**

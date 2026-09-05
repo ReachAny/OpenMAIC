@@ -23,6 +23,8 @@ import {
   IMAGE_PROVIDERS,
 } from '@/lib/media/image-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveImageApiKey,
@@ -33,6 +35,7 @@ import {
 import type { ImageProviderId, ImageGenerationOptions } from '@/lib/media/types';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 
 const log = createLogger('ImageGeneration API');
@@ -45,6 +48,8 @@ const log = createLogger('ImageGeneration API');
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   try {
     const body = (await request.json()) as ImageGenerationOptions;
 
@@ -59,6 +64,7 @@ export async function POST(request: NextRequest) {
     if (!providerId) {
       return apiError('MISSING_PROVIDER', 400, 'No image provider configured');
     }
+    assertReachAnyProviderAllowed('image', providerId);
     // Enforce server precedence: a force-disabled provider is off for everyone,
     // regardless of any client key/selection — mirror the TTS contract (#665).
     if (isServerProviderDisabled('image', providerId)) {
@@ -94,6 +100,7 @@ export async function POST(request: NextRequest) {
     // first pinned entry is the managed default; unmanaged providers use the
     // client header directly.
     const model = resolveImageModel(providerId, clientModel);
+    await assertReachAnyManagedModelAllowed('image_generation', 'image', providerId, model);
     // Workflow-based providers (e.g. comfyui-image) have no model catalog and
     // need no model; everyone else must resolve one.
     if (!model && provider?.models && provider.models.length > 0) {
@@ -129,6 +136,9 @@ export async function POST(request: NextRequest) {
     return apiSuccess({ result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, message);
+    }
     // Detect content safety filter rejections (e.g. Seedream OutputImageSensitiveContentDetected)
     if (message.includes('SensitiveContent') || message.includes('sensitive information')) {
       log.warn(`Image blocked by content safety filter: ${message}`);

@@ -43,6 +43,12 @@ export const PDF_PROVIDERS: Record<PDFProviderId, PDFProviderConfig> = {
     icon: '/logos/aliyun.svg',
     features: ['text', 'images', 'tables', 'formulas', 'layout-analysis', 'ocr'],
   },
+  reachany: {
+    id: 'reachany',
+    name: 'ReachAny Managed PDF',
+    requiresApiKey: true,
+    features: ['text', 'images', 'tables', 'formulas', 'layout-analysis', 'ocr'],
+  },
 };
 
 /**

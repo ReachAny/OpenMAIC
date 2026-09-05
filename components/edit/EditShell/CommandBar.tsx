@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { cn } from '@/lib/utils';
 import type { EditorCommand, SurfaceHistory } from '@/lib/edit/scene-editor-surface';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
 import { classroomExitLabelKey, exitClassroom } from '@/lib/workbench/classroom-exit';
 
 interface CommandBarProps {
@@ -37,7 +38,8 @@ export function CommandBar({ title, history, commands, trailing }: CommandBarPro
   const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const exitLabel = t(classroomExitLabelKey(searchParams));
+  const hostReturnUrl = useOpenMaicHostReturnUrl();
+  const exitLabel = t(classroomExitLabelKey(searchParams, hostReturnUrl));
 
   return (
     <header className="flex h-20 shrink-0 items-center gap-3 border-b border-zinc-200/60 px-8 dark:border-zinc-800/60">
@@ -47,7 +49,7 @@ export function CommandBar({ title, history, commands, trailing }: CommandBarPro
         <IconButton
           title={exitLabel}
           aria-label={exitLabel}
-          onClick={() => exitClassroom(router, searchParams)}
+          onClick={() => exitClassroom(router, searchParams, hostReturnUrl)}
         >
           <ArrowLeft className="h-4 w-4" />
         </IconButton>

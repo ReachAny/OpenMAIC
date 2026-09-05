@@ -29,6 +29,7 @@ import {
   Plus,
   CreditCard,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useSettingsStore } from '@/lib/store/settings';
@@ -220,6 +221,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   const ttsProvidersConfig = useSettingsStore((state) => state.ttsProvidersConfig);
   const asrProviderId = useSettingsStore((state) => state.asrProviderId);
   const asrProvidersConfig = useSettingsStore((state) => state.asrProvidersConfig);
+  const managedOnly = useSettingsStore((state) => state.managedOnly);
+  const serverCatalogLoaded = useSettingsStore((state) => state.serverCatalogLoaded);
+  const serverCatalogError = useSettingsStore((state) => state.serverCatalogError);
+  const fetchServerProviders = useSettingsStore((state) => state.fetchServerProviders);
+  const managedView = managedOnly || !serverCatalogLoaded;
 
   // Store actions
   const setProviderConfig = useSettingsStore((state) => state.setProviderConfig);
@@ -351,20 +357,22 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
     setTimeout(() => setSaveStatus('idle'), 2000);
   };
 
-  const selectedProvider = providersConfig[selectedProviderId]
-    ? {
-        id: selectedProviderId,
-        name: providersConfig[selectedProviderId].name,
-        type: providersConfig[selectedProviderId].type,
-        defaultBaseUrl: providersConfig[selectedProviderId].defaultBaseUrl,
-        baseUrlPlaceholder: PROVIDERS[selectedProviderId]?.baseUrlPlaceholder,
-        supportsModelDiscovery: PROVIDERS[selectedProviderId]?.supportsModelDiscovery,
-        alternateBaseUrls: PROVIDERS[selectedProviderId]?.alternateBaseUrls,
-        icon: providersConfig[selectedProviderId].icon,
-        requiresApiKey: providersConfig[selectedProviderId].requiresApiKey,
-        models: providersConfig[selectedProviderId].models,
-      }
-    : undefined;
+  const selectedProviderConfig = providersConfig[selectedProviderId];
+  const selectedProvider =
+    selectedProviderConfig && (!managedView || selectedProviderConfig.isServerConfigured)
+      ? {
+          id: selectedProviderId,
+          name: selectedProviderConfig.name,
+          type: selectedProviderConfig.type,
+          defaultBaseUrl: selectedProviderConfig.defaultBaseUrl,
+          baseUrlPlaceholder: PROVIDERS[selectedProviderId]?.baseUrlPlaceholder,
+          supportsModelDiscovery: PROVIDERS[selectedProviderId]?.supportsModelDiscovery,
+          alternateBaseUrls: PROVIDERS[selectedProviderId]?.alternateBaseUrls,
+          icon: selectedProviderConfig.icon,
+          requiresApiKey: selectedProviderConfig.requiresApiKey,
+          models: selectedProviderConfig.models,
+        }
+      : undefined;
 
   // Handle model editing
   const handleEditModel = (pid: ProviderId, modelIndex: number) => {
@@ -526,16 +534,82 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
   };
 
   // Get all providers from providersConfig
-  const allProviders = Object.entries(providersConfig).map(([id, config]) => ({
-    id: id as ProviderId,
-    name: config.name,
-    type: config.type,
-    defaultBaseUrl: config.defaultBaseUrl,
-    icon: config.icon,
-    requiresApiKey: config.requiresApiKey,
-    models: config.models,
-    isServerConfigured: config.isServerConfigured,
-  }));
+  const allProviders = Object.entries(providersConfig)
+    .map(([id, config]) => ({
+      id: id as ProviderId,
+      name: config.name,
+      type: config.type,
+      defaultBaseUrl: config.defaultBaseUrl,
+      icon: config.icon,
+      requiresApiKey: config.requiresApiKey,
+      models: config.models,
+      isServerConfigured: config.isServerConfigured,
+    }))
+    .filter((provider) => !managedView || provider.isServerConfigured);
+
+  const visiblePDFProviders = Object.values(PDF_PROVIDERS).filter(
+    (provider) => !managedView || pdfProvidersConfig[provider.id]?.isServerConfigured,
+  );
+  const visibleWebSearchProviders = Object.values(WEB_SEARCH_PROVIDERS)
+    .filter((provider) => !managedView || webSearchProvidersConfig[provider.id]?.isServerConfigured)
+    .map((provider) => ({ ...provider, name: getWebSearchProviderDisplayName(provider.id, t) }));
+  const visibleImageProviders = Object.values(IMAGE_PROVIDERS)
+    .filter((provider) => !managedView || imageProvidersConfig[provider.id]?.isServerConfigured)
+    .map((p) => ({ ...p, name: t(`settings.${IMAGE_PROVIDER_NAMES[p.id]}`) || p.name }));
+  const visibleVideoProviders = Object.values(VIDEO_PROVIDERS)
+    .filter((provider) => !managedView || videoProvidersConfig[provider.id]?.isServerConfigured)
+    .map((p) => ({ ...p, name: t(`settings.${VIDEO_PROVIDER_NAMES[p.id]}`) || p.name }));
+
+  useEffect(() => {
+    if (!managedView) return;
+    const firstProvider = allProviders[0]?.id;
+    if (firstProvider && !providersConfig[selectedProviderId]?.isServerConfigured) {
+      // The server catalog can invalidate a persisted selection; reconcile it
+      // after the authoritative flags arrive rather than rendering an
+      // unauthorized provider.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedProviderId(firstProvider);
+    }
+    const firstPdf = visiblePDFProviders[0]?.id;
+    if (firstPdf && !pdfProvidersConfig[selectedPdfProviderId]?.isServerConfigured) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedPdfProviderId(firstPdf);
+    }
+    const firstSearch = visibleWebSearchProviders[0]?.id;
+    if (firstSearch && !webSearchProvidersConfig[selectedWebSearchProviderId]?.isServerConfigured) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedWebSearchProviderId(firstSearch);
+    }
+    const firstImage = visibleImageProviders[0]?.id;
+    if (firstImage && !imageProvidersConfig[selectedImageProviderId]?.isServerConfigured) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedImageProviderId(firstImage);
+    }
+    const firstVideo = visibleVideoProviders[0]?.id;
+    if (firstVideo && !videoProvidersConfig[selectedVideoProviderId]?.isServerConfigured) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedVideoProviderId(firstVideo);
+    }
+  }, [
+    managedOnly,
+    managedView,
+    serverCatalogLoaded,
+    allProviders,
+    visiblePDFProviders,
+    visibleWebSearchProviders,
+    visibleImageProviders,
+    visibleVideoProviders,
+    providersConfig,
+    pdfProvidersConfig,
+    webSearchProvidersConfig,
+    imageProvidersConfig,
+    videoProvidersConfig,
+    selectedProviderId,
+    selectedPdfProviderId,
+    selectedWebSearchProviderId,
+    selectedImageProviderId,
+    selectedVideoProviderId,
+  ]);
 
   // Sections that show a provider list column
   const _hasProviderList = [
@@ -598,7 +672,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         return null;
       case 'pdf': {
         const pdfProvider = PDF_PROVIDERS[selectedPdfProviderId];
-        if (!pdfProvider) return null;
+        if (
+          !pdfProvider ||
+          (managedView && !pdfProvidersConfig[selectedPdfProviderId]?.isServerConfigured)
+        )
+          return null;
         return (
           <>
             {pdfProvider.icon ? (
@@ -619,7 +697,12 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       }
       case 'web-search': {
         const wsProvider = WEB_SEARCH_PROVIDERS[selectedWebSearchProviderId];
-        if (!wsProvider) return null;
+        if (
+          !wsProvider ||
+          (managedView &&
+            !webSearchProvidersConfig[selectedWebSearchProviderId]?.isServerConfigured)
+        )
+          return null;
         return (
           <>
             {wsProvider.icon ? (
@@ -642,6 +725,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       }
       case 'image': {
         const imgProvider = IMAGE_PROVIDERS[selectedImageProviderId];
+        if (
+          !imgProvider ||
+          (managedView && !imageProvidersConfig[selectedImageProviderId]?.isServerConfigured)
+        )
+          return null;
         const imgIcon = IMAGE_PROVIDER_ICONS[selectedImageProviderId];
         return (
           <>
@@ -665,6 +753,11 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
       }
       case 'video': {
         const vidProvider = VIDEO_PROVIDERS[selectedVideoProviderId];
+        if (
+          !vidProvider ||
+          (managedView && !videoProvidersConfig[selectedVideoProviderId]?.isServerConfigured)
+        )
+          return null;
         const vidIcon = VIDEO_PROVIDER_ICONS[selectedVideoProviderId];
         return (
           <>
@@ -687,6 +780,14 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         );
       }
       case 'tts': {
+        if (managedView && !ttsProvidersConfig[ttsProviderId]?.isServerConfigured) {
+          return (
+            <>
+              <Volume2 className="h-6 w-6 text-muted-foreground" />
+              <h2 className="text-lg font-semibold">{t('settings.ttsSettings')}</h2>
+            </>
+          );
+        }
         const ttsIcon = TTS_PROVIDERS[ttsProviderId as keyof typeof TTS_PROVIDERS]?.icon;
         return (
           <>
@@ -707,6 +808,14 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
         );
       }
       case 'asr': {
+        if (managedView && !asrProvidersConfig[asrProviderId]?.isServerConfigured) {
+          return (
+            <>
+              <Mic className="h-6 w-6 text-muted-foreground" />
+              <h2 className="text-lg font-semibold">{t('settings.asrSettings')}</h2>
+            </>
+          );
+        }
         const asrIcon = ASR_PROVIDERS[asrProviderId as keyof typeof ASR_PROVIDERS]?.icon;
         return (
           <>
@@ -885,7 +994,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 providers={allProviders}
                 selectedProviderId={selectedProviderId}
                 onSelect={handleProviderSelect}
-                onAddProvider={() => setShowAddProviderDialog(true)}
+                onAddProvider={managedView ? undefined : () => setShowAddProviderDialog(true)}
                 width={providerListWidth}
               />
               <div
@@ -900,7 +1009,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'pdf' && (
             <>
               <ProviderListColumn
-                providers={Object.values(PDF_PROVIDERS)}
+                providers={visiblePDFProviders}
                 configs={pdfProvidersConfig}
                 selectedId={selectedPdfProviderId}
                 onSelect={setSelectedPdfProviderId}
@@ -919,10 +1028,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'web-search' && (
             <>
               <ProviderListColumn
-                providers={Object.values(WEB_SEARCH_PROVIDERS).map((provider) => ({
-                  ...provider,
-                  name: getWebSearchProviderDisplayName(provider.id, t),
-                }))}
+                providers={visibleWebSearchProviders}
                 configs={webSearchProvidersConfig}
                 selectedId={selectedWebSearchProviderId}
                 onSelect={setSelectedWebSearchProviderId}
@@ -941,9 +1047,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'image' && (
             <>
               <ProviderListColumn
-                providers={Object.values(IMAGE_PROVIDERS).map((p) => ({
-                  id: p.id,
-                  name: t(`settings.${IMAGE_PROVIDER_NAMES[p.id]}`) || p.name,
+                providers={visibleImageProviders.map((p) => ({
+                  ...p,
                   icon: IMAGE_PROVIDER_ICONS[p.id],
                 }))}
                 configs={imageProvidersConfig}
@@ -964,9 +1069,8 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
           {activeSection === 'video' && (
             <>
               <ProviderListColumn
-                providers={Object.values(VIDEO_PROVIDERS).map((p) => ({
-                  id: p.id,
-                  name: t(`settings.${VIDEO_PROVIDER_NAMES[p.id]}`) || p.name,
+                providers={visibleVideoProviders.map((p) => ({
+                  ...p,
                   icon: VIDEO_PROVIDER_ICONS[p.id],
                 }))}
                 configs={videoProvidersConfig}
@@ -988,13 +1092,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <>
               <ProviderListColumn
                 providers={[
-                  ...Object.values(TTS_PROVIDERS).map((p) => ({
+                  ...(managedView
+                    ? Object.values(TTS_PROVIDERS).filter(
+                        (p) => ttsProvidersConfig[p.id]?.isServerConfigured,
+                      )
+                    : Object.values(TTS_PROVIDERS)
+                  ).map((p) => ({
                     id: p.id,
                     name: getTTSProviderName(p.id, t),
                     icon: p.icon,
                   })),
                   ...Object.entries(ttsProvidersConfig)
-                    .filter(([id]) => isCustomTTSProvider(id))
+                    .filter(([id]) => !managedView && isCustomTTSProvider(id))
                     .map(([id, cfg]) => ({
                       id: id as TTSProviderId,
                       name: cfg.customName || id,
@@ -1006,7 +1115,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 onSelect={setTTSProvider}
                 width={providerListWidth}
                 t={t}
-                onAdd={() => setShowAddTTSProviderDialog(true)}
+                onAdd={managedView ? undefined : () => setShowAddTTSProviderDialog(true)}
               />
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'providerList')}
@@ -1021,13 +1130,18 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
             <>
               <ProviderListColumn
                 providers={[
-                  ...Object.values(ASR_PROVIDERS).map((p) => ({
+                  ...(managedView
+                    ? Object.values(ASR_PROVIDERS).filter(
+                        (p) => asrProvidersConfig[p.id]?.isServerConfigured,
+                      )
+                    : Object.values(ASR_PROVIDERS)
+                  ).map((p) => ({
                     id: p.id,
                     name: getASRProviderName(p.id, t),
                     icon: p.icon,
                   })),
                   ...Object.entries(asrProvidersConfig)
-                    .filter(([id]) => isCustomASRProvider(id))
+                    .filter(([id]) => !managedView && isCustomASRProvider(id))
                     .map(([id, cfg]) => ({
                       id: id as ASRProviderId,
                       name: cfg.customName || id,
@@ -1039,7 +1153,7 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                 onSelect={setASRProvider}
                 width={providerListWidth}
                 t={t}
-                onAdd={() => setShowAddASRProviderDialog(true)}
+                onAdd={managedView ? undefined : () => setShowAddASRProviderDialog(true)}
               />
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'providerList')}
@@ -1075,13 +1189,30 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-5">
+              {!serverCatalogLoaded && (
+                <div className="flex min-h-32 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+                  {serverCatalogError ? (
+                    <>
+                      <span>{t('settings.connectionFailed')}</span>
+                      <Button variant="outline" size="sm" onClick={() => void fetchServerProviders()}>
+                        {t('common.retry')}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span>{t('common.loading')}</span>
+                    </>
+                  )}
+                </div>
+              )}
               {activeSection === 'general' && <GeneralSettings />}
 
               {activeSection === 'skills' && <SkillSettings />}
 
               {activeSection === 'token-plan' && <TokenPlanSettings />}
 
-              {activeSection === 'providers' && selectedProvider && (
+              {activeSection === 'providers' && serverCatalogLoaded && selectedProvider && (
                 <ProviderConfigPanel
                   provider={selectedProvider}
                   initialApiKey={providersConfig[selectedProviderId]?.apiKey || ''}
@@ -1101,23 +1232,71 @@ export function SettingsDialog({ open, onOpenChange, initialSection }: SettingsD
                   modelsUrl={providersConfig[selectedProviderId]?.modelsUrl}
                   onResetToDefault={() => handleResetProvider(selectedProviderId)}
                   isBuiltIn={providersConfig[selectedProviderId]?.isBuiltIn ?? true}
+                  managedOnly={managedView}
                 />
               )}
+              {activeSection === 'providers' && serverCatalogLoaded && !selectedProvider && (
+                <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                  {t('settings.noConfiguredProviders')}
+                </div>
+              )}
 
-              {activeSection === 'pdf' && (
-                <PDFSettings selectedProviderId={selectedPdfProviderId} />
-              )}
-              {activeSection === 'web-search' && (
-                <WebSearchSettings selectedProviderId={selectedWebSearchProviderId} />
-              )}
-              {activeSection === 'image' && (
+              {activeSection === 'pdf' && serverCatalogLoaded &&
+                (!managedView || pdfProvidersConfig[selectedPdfProviderId]?.isServerConfigured) && (
+                  <PDFSettings selectedProviderId={selectedPdfProviderId} />
+                )}
+              {activeSection === 'pdf' && serverCatalogLoaded &&
+                managedView && !pdfProvidersConfig[selectedPdfProviderId]?.isServerConfigured && (
+                  <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                    {t('settings.noConfiguredProviders')}
+                  </div>
+                )}
+              {activeSection === 'web-search' && serverCatalogLoaded &&
+                (!managedView ||
+                  webSearchProvidersConfig[selectedWebSearchProviderId]?.isServerConfigured) && (
+                  <WebSearchSettings selectedProviderId={selectedWebSearchProviderId} />
+                )}
+              {activeSection === 'web-search' && serverCatalogLoaded &&
+                managedView &&
+                  !webSearchProvidersConfig[selectedWebSearchProviderId]?.isServerConfigured && (
+                  <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                    {t('settings.noConfiguredProviders')}
+                  </div>
+                )}
+              {activeSection === 'image' && serverCatalogLoaded &&
+                (!managedView ||
+                  imageProvidersConfig[selectedImageProviderId]?.isServerConfigured) ? (
                 <ImageSettings selectedProviderId={selectedImageProviderId} />
-              )}
-              {activeSection === 'video' && (
+              ) : activeSection === 'image' && serverCatalogLoaded ? (
+                <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                  {t('settings.noConfiguredProviders')}
+                </div>
+              ) : null}
+              {activeSection === 'video' && serverCatalogLoaded &&
+                (!managedView ||
+                  videoProvidersConfig[selectedVideoProviderId]?.isServerConfigured) ? (
                 <VideoSettings selectedProviderId={selectedVideoProviderId} />
-              )}
-              {activeSection === 'tts' && <TTSSettings selectedProviderId={ttsProviderId} />}
-              {activeSection === 'asr' && <ASRSettings selectedProviderId={asrProviderId} />}
+              ) : activeSection === 'video' && serverCatalogLoaded ? (
+                <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                  {t('settings.noConfiguredProviders')}
+                </div>
+              ) : null}
+              {activeSection === 'tts' && serverCatalogLoaded &&
+                (!managedView || ttsProvidersConfig[ttsProviderId]?.isServerConfigured) ? (
+                <TTSSettings selectedProviderId={ttsProviderId} />
+              ) : activeSection === 'tts' && serverCatalogLoaded ? (
+                <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                  {t('settings.noConfiguredProviders')}
+                </div>
+              ) : null}
+              {activeSection === 'asr' && serverCatalogLoaded &&
+                (!managedView || asrProvidersConfig[asrProviderId]?.isServerConfigured) ? (
+                <ASRSettings selectedProviderId={asrProviderId} />
+              ) : activeSection === 'asr' && serverCatalogLoaded ? (
+                <div className="flex min-h-32 items-center justify-center text-sm text-muted-foreground">
+                  {t('settings.noConfiguredProviders')}
+                </div>
+              ) : null}
             </div>
 
             {/* Footer */}

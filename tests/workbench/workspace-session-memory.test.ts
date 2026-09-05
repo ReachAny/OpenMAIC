@@ -4,6 +4,7 @@ import {
   LAST_WORKSPACE_SESSION_STORAGE_KEY,
   readLastWorkspaceSessionId,
   rememberWorkspaceSession,
+  workspaceCourseHref,
   workspaceResumeHref,
 } from '@/lib/workbench/workspace-session-memory';
 
@@ -51,5 +52,10 @@ describe('workspace session entry memory', () => {
 
   it('encodes opaque session ids in the entry URL', () => {
     expect(workspaceResumeHref('session / ?')).toBe('/workspace?session=session%20%2F%20%3F');
+  });
+
+  it('opens a stage-bound Pro workspace with its authorized course pane', () => {
+    expect(workspaceCourseHref(' stage / ? ')).toBe('/workspace?course=stage%20%2F%20%3F');
+    expect(workspaceCourseHref('  ')).toBe('/workspace');
   });
 });

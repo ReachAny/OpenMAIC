@@ -10,6 +10,10 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { createLogger } from '@/lib/logger';
 import {
+  listReachAnyModels,
+  type ReachAnyCapabilityMode,
+} from '@/lib/server/reachany-model-gateway';
+import {
   DEFAULT_QWEN_TTS_VOICE_CLONE_MODEL,
   isQwenCatalogVoice,
   isQwenVoiceCloneModel,
@@ -85,6 +89,7 @@ export const LLM_ENV_MAP: Record<string, string> = {
 };
 
 const TTS_ENV_MAP: Record<string, string> = {
+  TTS_REACHANY: 'reachany-tts',
   TTS_OPENAI: 'openai-tts',
   TTS_AZURE: 'azure-tts',
   TTS_GLM: 'glm-tts',
@@ -108,6 +113,7 @@ const PDF_ENV_MAP: Record<string, string> = {
   PDF_UNPDF: 'unpdf',
   PDF_MINERU: 'mineru',
   PDF_MINERU_CLOUD: 'mineru-cloud',
+  PDF_REACHANY: 'reachany',
 };
 
 const IMAGE_ENV_MAP: Record<string, string> = {
@@ -140,6 +146,7 @@ const WEB_SEARCH_ENV_MAP: Record<string, string> = {
   // Dedicated prefix avoids colliding with the Doubao LLM provider vars.
   WEB_SEARCH_DOUBAO: 'doubao',
   SEARXNG: 'searxng',
+  WEB_SEARCH_REACHANY: 'reachany',
 };
 
 // ---------------------------------------------------------------------------
@@ -353,6 +360,8 @@ const DEFAULT_FILENAME = 'server-providers.yml';
 const OPENAI_IMAGE_PROVIDER_ID = 'openai-image';
 const ALIDOCMIND_PROVIDER_ID = 'alidocmind';
 const BEDROCK_PROVIDER_ID = 'bedrock';
+const REACHANY_TTS_PROVIDER_ID = 'reachany-tts';
+const REACHANY_DOCUMENT_PROVIDER_ID = 'reachany';
 
 /** Cache keyed by YAML filename (empty string = default file). */
 const _configs: Map<string, ServerConfig> = new Map();
@@ -453,6 +462,39 @@ function applyOpenAIImageFallback(
   return imageConfig;
 }
 
+function applyReachAnyGatewayFallback(
+  config: Record<string, ServerProviderEntry>,
+  providerId: string,
+): Record<string, ServerProviderEntry> {
+  if (config[providerId]) return config;
+  const baseUrl = process.env.REACHANY_MODEL_BASE_URL?.trim();
+  const serviceToken = process.env.REACHANY_OPENMAIC_SERVICE_TOKEN?.trim();
+  if (!baseUrl || !serviceToken) return config;
+  config[providerId] = { apiKey: serviceToken, baseUrl };
+  return config;
+}
+
+/**
+ * ReachAny's managed LLM catalog is exposed through the OpenAI-compatible
+ * OpenRouter adapter. Local host runs often provide only the canonical
+ * REACHANY_MODEL_BASE_URL and service token, while the deployment secret
+ * materializes OPENROUTER_* variables. Keep both paths equivalent so a
+ * managed deployment never falls back to an empty browser model selection.
+ */
+function applyReachAnyLlmGatewayFallback(
+  config: Record<string, ServerProviderEntry>,
+): Record<string, ServerProviderEntry> {
+  if (config.openrouter) return config;
+  const baseUrl = process.env.REACHANY_MODEL_BASE_URL?.trim();
+  const serviceToken = process.env.REACHANY_OPENMAIC_SERVICE_TOKEN?.trim();
+  if (!baseUrl || !serviceToken) return config;
+  config.openrouter = {
+    apiKey: serviceToken,
+    baseUrl: `${baseUrl.replace(/\/$/, '')}/v1`,
+  };
+  return config;
+}
+
 function splitModels(models: string | undefined): string[] | undefined {
   const parsed = models
     ?.split(',')
@@ -503,34 +545,69 @@ function buildConfig(yamlData: YamlData): ServerConfig {
     yamlData.image,
   );
   const providers = applyBedrockProviderConfig(
-    loadEnvSection(LLM_ENV_MAP, yamlData.providers, {
-      keylessProviders: new Set(['ollama', 'lemonade', BEDROCK_PROVIDER_ID]),
-    }),
+    applyReachAnyLlmGatewayFallback(
+      loadEnvSection(LLM_ENV_MAP, yamlData.providers, {
+        keylessProviders: new Set(['ollama', 'lemonade', BEDROCK_PROVIDER_ID]),
+      }),
+    ),
     yamlData.providers,
   );
 
-  return {
+  const config: ServerConfig = {
     providers,
-    tts: loadEnvSection(TTS_ENV_MAP, yamlData.tts, {
-      keylessProviders: new Set(['voxcpm-tts', 'lemonade-tts']),
-    }),
-    asr: loadEnvSection(ASR_ENV_MAP, yamlData.asr, {
-      keylessProviders: new Set(['funasr-asr', 'lemonade-asr']),
-    }),
-    pdf: applyAliDocMindFallback(
-      loadEnvSection(PDF_ENV_MAP, yamlData.pdf, {
-        requiresBaseUrl: true,
-        baseUrlOptionalProviders: new Set(['mineru-cloud']),
+    tts: applyReachAnyGatewayFallback(
+      loadEnvSection(TTS_ENV_MAP, yamlData.tts, {
+        keylessProviders: new Set(['voxcpm-tts', 'lemonade-tts']),
       }),
-      yamlData.pdf,
+      REACHANY_TTS_PROVIDER_ID,
+    ),
+    asr: applyReachAnyGatewayFallback(
+      loadEnvSection(ASR_ENV_MAP, yamlData.asr, {
+        keylessProviders: new Set(['funasr-asr', 'lemonade-asr']),
+      }),
+      'openai-whisper',
+    ),
+    pdf: applyReachAnyGatewayFallback(
+      applyAliDocMindFallback(
+        loadEnvSection(PDF_ENV_MAP, yamlData.pdf, {
+          requiresBaseUrl: true,
+          baseUrlOptionalProviders: new Set(['mineru-cloud']),
+        }),
+        yamlData.pdf,
+      ),
+      REACHANY_DOCUMENT_PROVIDER_ID,
     ),
     image,
     video: loadEnvSection(VIDEO_ENV_MAP, yamlData.video),
-    webSearch: loadEnvSection(WEB_SEARCH_ENV_MAP, yamlData['web-search'], {
-      keylessProviders: new Set(['brave', 'searxng']),
-    }),
+    webSearch: applyReachAnyGatewayFallback(
+      loadEnvSection(WEB_SEARCH_ENV_MAP, yamlData['web-search'], {
+        keylessProviders: new Set(['brave', 'searxng']),
+      }),
+      REACHANY_DOCUMENT_PROVIDER_ID,
+    ),
     disabled: collectDisabledProviders(yamlData),
   };
+
+  // A ReachAny deployment is a closed appliance: all capability traffic goes
+  // through model-service and no vendor/client provider can be activated by
+  // a stale browser setting or a direct request. Keep only the adapters that
+  // have an implemented ReachAny gateway; video is intentionally empty until
+  // a server-side video adapter exists (Sora is not advertised).
+  if (isReachAnyManagedOnlyDeployment()) {
+    const keep = <T>(section: Record<string, T>, ids: string[]) =>
+      Object.fromEntries(ids.filter((id) => section[id]).map((id) => [id, section[id]])) as Record<
+        string,
+        T
+      >;
+    config.providers = keep(config.providers, ['openrouter']);
+    config.tts = keep(config.tts, ['reachany-tts']);
+    config.asr = keep(config.asr, ['openai-whisper']);
+    config.pdf = keep(config.pdf, ['reachany']);
+    config.image = keep(config.image, ['openai-image']);
+    config.video = {};
+    config.webSearch = keep(config.webSearch, ['reachany']);
+  }
+  return config;
 }
 
 function logConfig(config: ServerConfig, label: string): void {
@@ -574,6 +651,77 @@ function getConfig(): ServerConfig {
 // ---------------------------------------------------------------------------
 
 type ProviderSection = 'providers' | 'tts' | 'asr' | 'pdf' | 'image' | 'video' | 'webSearch';
+
+/** ReachAcademy deployments are locked to the server-owned model-service catalog. */
+export function isReachAnyManagedOnlyDeployment(): boolean {
+  return Boolean(
+    process.env.REACHANY_MODEL_BASE_URL?.trim() &&
+    process.env.REACHANY_OPENMAIC_SERVICE_TOKEN?.trim(),
+  );
+}
+
+/** In managed-only mode, client credentials cannot activate another provider. */
+export function isReachAnyProviderAllowed(section: ProviderSection, providerId: string): boolean {
+  return !isReachAnyManagedOnlyDeployment() || !!getConfig()[section][providerId];
+}
+
+export function assertReachAnyProviderAllowed(section: ProviderSection, providerId: string): void {
+  if (!isReachAnyProviderAllowed(section, providerId)) {
+    throw new Error(`Provider "${providerId}" is not enabled by the ReachAny server`);
+  }
+}
+
+const managedCatalogCache = new Map<
+  ReachAnyCapabilityMode,
+  { expiresAt: number; models: string[] }
+>();
+const MANAGED_CATALOG_TTL_MS = 30_000;
+
+/** Resolve the server-owned model IDs for a capability, failing closed on a configured gateway. */
+export async function getReachAnyManagedModels(mode: ReachAnyCapabilityMode): Promise<string[]> {
+  const now = Date.now();
+  const cached = managedCatalogCache.get(mode);
+  if (cached && cached.expiresAt > now) return cached.models;
+  if (!isReachAnyManagedOnlyDeployment()) return [];
+  try {
+    const models = await listReachAnyModels(mode);
+    managedCatalogCache.set(mode, { expiresAt: now + MANAGED_CATALOG_TTL_MS, models });
+    return models;
+  } catch (error) {
+    log.warn(`Failed to load ReachAny ${mode} model catalog; denying unmanaged fallback`, error);
+    managedCatalogCache.set(mode, { expiresAt: now + 5_000, models: [] });
+    return [];
+  }
+}
+
+export function isReachAnyManagedModelAllowed(
+  section: ProviderSection,
+  providerId: string,
+  modelId: string | undefined,
+  serverModels?: string[],
+): boolean {
+  if (!isReachAnyManagedOnlyDeployment()) return true;
+  if (!isReachAnyProviderAllowed(section, providerId)) return false;
+  if (!modelId) return false;
+  if (serverModels?.length) return serverModels.includes(modelId);
+  const configured = getConfig()[section][providerId]?.models;
+  return !configured?.length || configured.includes(modelId);
+}
+
+/** Async model allowlist check against the ReachAny model-service catalog. */
+export async function assertReachAnyManagedModelAllowed(
+  mode: ReachAnyCapabilityMode,
+  section: ProviderSection,
+  providerId: string,
+  modelId: string | undefined,
+): Promise<void> {
+  assertReachAnyProviderAllowed(section, providerId);
+  if (!isReachAnyManagedOnlyDeployment()) return;
+  const models = await getReachAnyManagedModels(mode);
+  if (!modelId || models.length === 0 || !models.includes(modelId)) {
+    throw new Error(`Model "${modelId ?? ''}" is not enabled by the ReachAny model service`);
+  }
+}
 
 /** Whether the operator configured this provider in the given section. */
 export function isServerConfiguredProvider(section: ProviderSection, providerId: string): boolean {
@@ -638,6 +786,58 @@ export function getServerProviders(): Record<string, { models?: string[] }> {
   return result;
 }
 
+/**
+ * Managed provider catalog for the ReachAcademy UI. model-service is the
+ * source of truth when running in managed-only mode; static env/YAML pins are
+ * retained as a deterministic fallback for standalone OpenMAIC deployments.
+ */
+export async function getServerProviderCatalog(): Promise<{
+  providers: Record<string, { models?: string[] }>;
+  image: Record<string, { models?: string[]; disabled?: boolean }>;
+  video: Record<string, { models?: string[]; disabled?: boolean }>;
+  tts: Record<string, { models?: string[]; disabled?: boolean }>;
+  asr: Record<string, { models?: string[]; disabled?: boolean }>;
+}> {
+  const providers = getServerProviders();
+  const image = getServerImageProviders();
+  const video = getServerVideoProviders();
+  const tts = getServerTTSProviders();
+  const asr = getServerASRProviders();
+  if (!isReachAnyManagedOnlyDeployment()) return { providers, image, video, tts, asr };
+
+  const [chat, imageModels, videoModels, speech, transcription] = await Promise.all([
+    getReachAnyManagedModels('chat'),
+    getReachAnyManagedModels('image_generation'),
+    // Managed deployments currently expose no video provider; avoid a catalog
+    // round-trip for a capability that cannot be selected until its adapter lands.
+    video.sora ? getReachAnyManagedModels('video_generation') : Promise.resolve([]),
+    getReachAnyManagedModels('audio_speech'),
+    getReachAnyManagedModels('audio_transcription'),
+  ]);
+  if (providers.openrouter) {
+    if (chat.length) providers.openrouter = { models: chat };
+    else delete providers.openrouter;
+  }
+  if (image['openai-image']) {
+    if (imageModels.length) image['openai-image'] = { models: imageModels };
+    else delete image['openai-image'];
+  }
+  if (video.sora) {
+    if (videoModels.length) video.sora = { models: videoModels };
+    else delete video.sora;
+  }
+  if (tts['reachany-tts']) {
+    if (speech.length) tts['reachany-tts'] = { models: speech };
+    else delete tts['reachany-tts'];
+  }
+  if (asr['openai-whisper'] && transcription.length) {
+    asr['openai-whisper'] = { models: transcription };
+  } else {
+    delete asr['openai-whisper'];
+  }
+  return { providers, image, video, tts, asr };
+}
+
 /** Resolve API key. Managed provider ⇒ server key; otherwise client key. */
 export function resolveApiKey(providerId: string, clientKey?: string): string {
   return resolveSectionApiKey('providers', providerId, clientKey);
@@ -663,10 +863,12 @@ export function resolveProxy(providerId: string): string | undefined {
  * providers (`{ disabled: true }`). A force-disabled provider is reported as
  * disabled even when it is otherwise configured — disable wins (#665).
  */
-export function getServerTTSProviders(): Record<string, { disabled?: boolean }> {
+export function getServerTTSProviders(): Record<string, { models?: string[]; disabled?: boolean }> {
   const cfg = getConfig();
-  const result: Record<string, { disabled?: boolean }> = {};
-  for (const id of Object.keys(cfg.tts)) result[id] = {};
+  const result: Record<string, { models?: string[]; disabled?: boolean }> = {};
+  for (const [id, entry] of Object.entries(cfg.tts)) {
+    result[id] = entry.models?.length ? { models: entry.models } : {};
+  }
   for (const id of cfg.disabled.tts) result[id] = { disabled: true };
   return result;
 }
@@ -772,10 +974,12 @@ export function resolveTTSModel(
  * (presence = managed flag) plus operator force-disabled providers
  * (`{ disabled: true }`), mirroring the TTS listing — disable wins (#665).
  */
-export function getServerASRProviders(): Record<string, { disabled?: boolean }> {
+export function getServerASRProviders(): Record<string, { models?: string[]; disabled?: boolean }> {
   const cfg = getConfig();
-  const result: Record<string, { disabled?: boolean }> = {};
-  for (const id of Object.keys(cfg.asr)) result[id] = {};
+  const result: Record<string, { models?: string[]; disabled?: boolean }> = {};
+  for (const [id, entry] of Object.entries(cfg.asr)) {
+    result[id] = entry.models?.length ? { models: entry.models } : {};
+  }
   for (const id of cfg.disabled.asr) result[id] = { disabled: true };
   return result;
 }
@@ -893,10 +1097,15 @@ export function resolveImageModel(providerId: string, clientModel?: string): str
  * (presence = managed flag) plus operator force-disabled providers
  * (`{ disabled: true }`), mirroring the TTS listing — disable wins (#665).
  */
-export function getServerVideoProviders(): Record<string, { disabled?: boolean }> {
+export function getServerVideoProviders(): Record<
+  string,
+  { models?: string[]; disabled?: boolean }
+> {
   const cfg = getConfig();
-  const result: Record<string, { disabled?: boolean }> = {};
-  for (const id of Object.keys(cfg.video)) result[id] = {};
+  const result: Record<string, { models?: string[]; disabled?: boolean }> = {};
+  for (const [id, entry] of Object.entries(cfg.video)) {
+    result[id] = entry.models?.length ? { models: entry.models } : {};
+  }
   for (const id of cfg.disabled.video) result[id] = { disabled: true };
   return result;
 }

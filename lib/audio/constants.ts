@@ -117,6 +117,19 @@ export function resolveTTSModelForVoice(
 }
 
 export const TTS_PROVIDERS: Record<BuiltInTTSProviderId, TTSProviderConfig> = {
+  'reachany-tts': {
+    id: 'reachany-tts',
+    name: 'ReachAny Managed TTS',
+    requiresApiKey: true,
+    models: [{ id: 'tts-1', name: 'Managed TTS' }],
+    defaultModelId: 'tts-1',
+    voices: [
+      { id: 'alloy', name: 'Alloy', language: 'multilingual', gender: 'neutral' },
+      { id: 'echo', name: 'Echo', language: 'multilingual', gender: 'male' },
+      { id: 'nova', name: 'Nova', language: 'multilingual', gender: 'female' },
+    ],
+    supportedFormats: ['mp3', 'wav', 'opus'],
+  },
   'openai-tts': {
     id: 'openai-tts',
     name: 'OpenAI TTS',
@@ -1334,6 +1347,7 @@ export const ASR_PROVIDERS: Record<BuiltInASRProviderId, ASRProviderConfig> = {
  * Used when switching providers or testing a non-active provider.
  */
 export const DEFAULT_TTS_VOICES: Record<BuiltInTTSProviderId, string> = {
+  'reachany-tts': 'alloy',
   'openai-tts': 'alloy',
   'azure-tts': 'zh-CN-XiaoxiaoNeural',
   'glm-tts': 'tongtong',
@@ -1347,6 +1361,7 @@ export const DEFAULT_TTS_VOICES: Record<BuiltInTTSProviderId, string> = {
 };
 
 export const DEFAULT_TTS_MODELS: Record<BuiltInTTSProviderId, string> = {
+  'reachany-tts': 'tts-1',
   'openai-tts': 'gpt-4o-mini-tts',
   'azure-tts': '',
   'glm-tts': 'glm-tts',

@@ -17,6 +17,8 @@
 import { NextRequest } from 'next/server';
 import { testVideoConnectivity } from '@/lib/media/video-providers';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerProviderDisabled,
   resolveVideoApiKey,
@@ -28,16 +30,20 @@ import type { VideoProviderId } from '@/lib/media/types';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('VerifyVideoProvider');
 
 export async function POST(request: NextRequest) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   try {
     const providerId = (request.headers.get('x-video-provider')?.trim() ||
       resolveServerVideoProviderId()) as VideoProviderId;
     if (!providerId) {
       return apiError('MISSING_PROVIDER', 400, 'No video provider configured');
     }
+    assertReachAnyProviderAllowed('video', providerId);
     // Enforce server precedence: a force-disabled provider is off for everyone,
     // regardless of any client key/selection — mirror the TTS contract (#665).
     if (isServerProviderDisabled('video', providerId)) {
@@ -64,6 +70,7 @@ export async function POST(request: NextRequest) {
     }
 
     const model = resolveVideoModel(providerId, clientModel);
+    await assertReachAnyManagedModelAllowed('video_generation', 'video', providerId, model);
     if (!model) {
       return apiError(
         'MISSING_MODEL',

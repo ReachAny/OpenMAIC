@@ -12,6 +12,8 @@ import { generateTTS, QwenTTSError, TTSRateLimitError } from '@/lib/audio/tts-pr
 import { TTS_PROVIDERS } from '@/lib/audio/constants';
 import { recordGenerationUsage } from '@/lib/server/usage-storage';
 import {
+  assertReachAnyManagedModelAllowed,
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   isServerTTSProviderDisabled,
   resolveTTSApiKey,
@@ -26,12 +28,15 @@ import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { VOXCPM_AUTO_VOICE_ID, VOXCPM_TTS_PROVIDER_ID } from '@/lib/audio/voxcpm';
 import { QwenVoiceCloneError, qwenVoiceCloneErrorMessage } from '@/lib/audio/qwen-voice-clone';
 import { isQwenCloneVoice } from '@/lib/audio/constants';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('TTS API');
 
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let ttsProviderId: string | undefined;
   let ttsVoice: string | undefined;
   let audioId: string | undefined;
@@ -60,6 +65,7 @@ export async function POST(req: NextRequest) {
         'Missing required fields: text, audioId, ttsProviderId, ttsVoice',
       );
     }
+    assertReachAnyProviderAllowed('tts', ttsProviderId);
 
     // Reject browser-native TTS — must be handled client-side
     if (ttsProviderId === 'browser-native-tts') {
@@ -122,6 +128,7 @@ export async function POST(req: NextRequest) {
     const qwenCloneVoice = ttsProviderId === 'qwen-tts' && isQwenCloneVoice(ttsVoice);
     const requestedSpeed = ttsSpeed ?? 1.0;
     const resolvedModelId = resolveTTSModel(ttsProviderId, ttsModelId, ttsVoice);
+    await assertReachAnyManagedModelAllowed('audio_speech', 'tts', ttsProviderId, resolvedModelId);
     const config = {
       providerId: ttsProviderId as TTSProviderId,
       modelId: resolvedModelId,
@@ -175,6 +182,9 @@ export async function POST(req: NextRequest) {
     }
     if (error instanceof TTSModelNotAllowedError) {
       return apiError(error.code, error.httpStatus, error.message);
+    }
+    if (error instanceof Error && error.message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
     }
     return apiError(
       'GENERATION_FAILED',

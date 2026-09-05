@@ -992,6 +992,8 @@
     "deleteFolderConfirmRemove": "This removes the folder and its courses, including chat history.",
     "notFound": "Course not found",
     "notFoundDesc": "This course does not exist, or it has been deleted.",
+    "authorizationRequired": "OpenMAIC course is temporarily unavailable",
+    "authorizationRequiredDesc": "Your sign-in or course authorization has expired. Re-enter from Teacher.",
     "backToHome": "Back to home"
   },
   "upload": {

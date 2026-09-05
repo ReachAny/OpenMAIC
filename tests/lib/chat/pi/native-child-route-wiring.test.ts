@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   streamLLM: vi.fn(),
   searchWeb: vi.fn(),
   getServerPersistenceProvider: vi.fn(),
+  authorizeOpenMaicRequest: vi.fn(),
 }));
 
 vi.mock('@/lib/server/resolve-model', () => ({ resolveModel: mocks.resolveModel }));
@@ -26,6 +27,9 @@ vi.mock('@/lib/ai/providers', async (importOriginal) => {
 vi.mock('@/lib/live-mode', () => ({ isLiveMode: false }));
 vi.mock('@/lib/persistence/server-provider', () => ({
   getServerPersistenceProvider: mocks.getServerPersistenceProvider,
+}));
+vi.mock('@/lib/reachacademy/bridge/guard', () => ({
+  authorizeOpenMaicRequest: mocks.authorizeOpenMaicRequest,
 }));
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -45,7 +49,6 @@ const envNames = [
   'TAVILY_BASE_URL',
   'NEXT_PUBLIC_PERSISTENCE',
   'DATABASE_URL',
-  'PERSISTENCE_DEV_TOKEN',
 ] as const;
 const originalEnv = new Map<string, string | undefined>();
 
@@ -69,8 +72,8 @@ function resultFrom(parts: Array<Record<string, unknown>>) {
 function makeRequest(
   overrides: Record<string, unknown> = {},
   headers: Record<string, string> = {
-    authorization: 'Bearer persistence-test-token',
-    'x-learner-key': 'learner-route-test',
+    cookie: 'reachany_openmaic_session=session-id',
+    'x-openmaic-stage-id': 'stage-1',
   },
 ): NextRequest {
   return new Request('http://localhost/api/chat/pi', {
@@ -165,6 +168,14 @@ describe('PR2 Native Child route production wiring', () => {
     mocks.streamLLM.mockReset();
     mocks.searchWeb.mockReset();
     mocks.getServerPersistenceProvider.mockReset();
+    mocks.authorizeOpenMaicRequest.mockReset();
+    mocks.authorizeOpenMaicRequest.mockResolvedValue({
+      grant: {
+        learnerKey: 'learner-route-test',
+        stage: 'draft',
+        expiresAt: Date.now() + 60_000,
+      },
+    });
     mocks.getServerPersistenceProvider.mockResolvedValue({
       runtimeStore: new BrowserRuntimeStore({
         indexedDB: new IDBFactory(),
@@ -269,7 +280,6 @@ describe('PR2 Native Child route production wiring', () => {
   it('wires RuntimeStore WB inventory through the real route and completes an action-only Child', async () => {
     process.env.NEXT_PUBLIC_PERSISTENCE = '1';
     process.env.DATABASE_URL = 'postgres://shared-provider-test';
-    process.env.PERSISTENCE_DEV_TOKEN = 'persistence-test-token';
     const directorResponses = [
       [toolCall('read-1', 'read_scene', { sceneId: 'scene-current' }), finish('tool-calls')],
       [
@@ -327,7 +337,7 @@ describe('PR2 Native Child route production wiring', () => {
 
     expect(response.status).toBe(200);
     expect(mocks.getServerPersistenceProvider).toHaveBeenCalledWith(
-      'postgres://shared-provider-test',
+      expect.stringContaining('search_path%3Dopenmaic_draft'),
     );
     const childPayloads = payloads.filter((payload) => payload.source === 'pi-chat-native-child');
     expect(childPayloads).toHaveLength(3);
@@ -407,7 +417,6 @@ describe('PR2 Native Child route production wiring', () => {
   it('executes wb_draw_text → wb_delete through the production route in one Child', async () => {
     process.env.NEXT_PUBLIC_PERSISTENCE = '1';
     process.env.DATABASE_URL = 'postgres://shared-provider-test';
-    process.env.PERSISTENCE_DEV_TOKEN = 'persistence-test-token';
     const directorResponses = [
       [toolCall('read-1', 'read_scene', { sceneId: 'scene-current' }), finish('tool-calls')],
       [
@@ -559,35 +568,9 @@ describe('PR2 Native Child route production wiring', () => {
           },
         }),
     },
-    {
-      name: 'a missing learner binding',
-      request: () =>
-        makeRequest(
-          {
-            config: {
-              agentIds: ['teacher-1'],
-              piEnableWhiteboardTools: true,
-              agentConfigs: [
-                {
-                  id: 'teacher-1',
-                  name: 'Teacher',
-                  role: 'teacher',
-                  persona: 'Teach directly.',
-                  avatar: '',
-                  color: '#3366ff',
-                  allowedActions: ['wb_draw_text'],
-                  priority: 10,
-                },
-              ],
-            },
-          },
-          { authorization: 'Bearer persistence-test-token' },
-        ),
-    },
-  ])('keeps the Native WB bundle absent for $name', async ({ request }) => {
+  ])('rejects $name before composing Native WB tools', async ({ request }) => {
     process.env.NEXT_PUBLIC_PERSISTENCE = '1';
     process.env.DATABASE_URL = 'postgres://shared-provider-test';
-    process.env.PERSISTENCE_DEV_TOKEN = 'persistence-test-token';
     const directorResponses = [
       [toolCall('read-1', 'read_scene', { sceneId: 'scene-current' }), finish('tool-calls')],
       [
@@ -612,19 +595,16 @@ describe('PR2 Native Child route production wiring', () => {
 
     const { POST } = await import('@/app/api/chat/pi/route');
     const response = await POST(request());
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     await response.text();
 
     expect(mocks.getServerPersistenceProvider).not.toHaveBeenCalled();
-    const child = payloads.find((payload) => payload.source === 'pi-chat-native-child');
-    expect(child?.options.tools).not.toHaveProperty('wb_read');
-    expect(child?.options.tools).not.toHaveProperty('wb_draw_text');
+    expect(payloads).toEqual([]);
   });
 
   it('keeps Pi chat available without WB inventory when persistence initialization fails', async () => {
     process.env.NEXT_PUBLIC_PERSISTENCE = '1';
     process.env.DATABASE_URL = 'postgres://unavailable-provider-test';
-    process.env.PERSISTENCE_DEV_TOKEN = 'persistence-test-token';
     mocks.getServerPersistenceProvider.mockRejectedValue(new Error('pool unavailable'));
     const directorResponses = [
       [toolCall('read-1', 'read_scene', { sceneId: 'scene-current' }), finish('tool-calls')],

@@ -31,7 +31,7 @@ import {
   composerImagesFromDrop,
   composerTransferHasImages,
 } from '@/lib/workbench/composer-image-transfer';
-import { createWorkbenchSession } from '@/lib/workbench/session-store';
+import { createWorkbenchSession, WorkbenchApiError } from '@/lib/workbench/session-store';
 import {
   COMPOSER_SEND_ARIA_KEYSHORTCUTS,
   shouldSendComposerKey,
@@ -305,7 +305,13 @@ export function ProLaunchPanel({
       onSessionCreated(session.id);
     } catch (error) {
       if (requestGeneration.current !== generation) return;
-      toast.error(error instanceof Error ? error.message : t('workbench.launch.createFailed'));
+      toast.error(
+        error instanceof WorkbenchApiError && error.errorCode === 'OPENMAIC_STAGE_REQUIRED'
+          ? t('workbench.launch.stageRequired')
+          : error instanceof Error
+            ? error.message
+            : t('workbench.launch.createFailed'),
+      );
       setSubmitting(false);
     }
   }

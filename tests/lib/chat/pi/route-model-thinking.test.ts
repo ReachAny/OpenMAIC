@@ -5,8 +5,13 @@ const PI_CHAT_FLAG = 'NEXT_PUBLIC_PI_CHAT_ENABLED';
 let originalPiChatFlag: string | undefined;
 
 const mocks = vi.hoisted(() => ({
+  authorizeOpenMaicRequest: vi.fn(),
   resolveModel: vi.fn(),
   runPiDirectorLoop: vi.fn(),
+}));
+
+vi.mock('@/lib/reachacademy/bridge/guard', () => ({
+  authorizeOpenMaicRequest: mocks.authorizeOpenMaicRequest,
 }));
 
 vi.mock('@/lib/server/resolve-model', () => ({
@@ -91,8 +96,12 @@ describe('POST /api/chat/pi model and thinking resolution', () => {
     originalPiChatFlag = process.env[PI_CHAT_FLAG];
     process.env[PI_CHAT_FLAG] = 'true';
     vi.resetModules();
+    mocks.authorizeOpenMaicRequest.mockReset();
     mocks.resolveModel.mockReset();
     mocks.runPiDirectorLoop.mockReset();
+    mocks.authorizeOpenMaicRequest.mockResolvedValue({
+      grant: { expiresAt: Date.now() + 60_000 },
+    });
     mocks.resolveModel.mockResolvedValue({
       model: { id: 'language-model' },
       apiKey: 'resolved-key',

@@ -166,8 +166,9 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
     'lib/server/provider-config.ts',
     'Temporary: provider configuration is still a mixed catalog and resolver composition root.',
     [
+      ['reachany', 59],
       ['qwen', 20],
-      ['openai', 23],
+      ['openai', 32],
       ['azure', 6],
       ['atlascloud', 2],
       ['anthropic', 2],
@@ -178,7 +179,7 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
       ['glm', 4],
       ['siliconflow', 2],
       ['doubao', 6],
-      ['openrouter', 2],
+      ['openrouter', 6],
       ['grok', 6],
       ['tencent', 4],
       ['hunyuan', 3],
@@ -188,7 +189,7 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
       ['bedrock', 29],
       ['voxcpm', 3],
       ['elevenlabs', 2],
-      ['whisper', 1],
+      ['whisper', 6],
       ['funasr', 3],
       ['unpdf', 2],
       ['mineru', 5],
@@ -210,6 +211,61 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
       ['comfyui', 2],
       ['alidocmind', 14],
     ],
+  ),
+  ...groupedDebt(
+    'lib/server/resolve-model.ts',
+    'Temporary: managed capability policy is composed in the neutral resolver until the adapter seam is extracted.',
+    [['reachany', 4]],
+  ),
+  ...groupedDebt(
+    'app/api/generate/tts/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 5]],
+  ),
+  ...groupedDebt(
+    'app/api/generate/voice/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 5]],
+  ),
+  ...groupedDebt(
+    'app/api/transcription/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 5]],
+  ),
+  ...groupedDebt(
+    'app/api/generate/image/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 5]],
+  ),
+  ...groupedDebt(
+    'app/api/generate/video/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 5]],
+  ),
+  ...groupedDebt(
+    'app/api/verify-image-provider/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 4]],
+  ),
+  ...groupedDebt(
+    'app/api/verify-video-provider/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 4]],
+  ),
+  ...groupedDebt(
+    'app/api/web-search/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 3]],
+  ),
+  ...groupedDebt(
+    'app/api/extract-document/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 6]],
+  ),
+  ...groupedDebt(
+    'app/api/parse-pdf/route.ts',
+    'Temporary: managed capability policy is composed in the neutral route until the adapter seam is extracted.',
+    [['reachany', 3]],
   ),
   ...groupedDebt(
     'app/api/generate/tts/route.ts',
@@ -273,6 +329,7 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
     'lib/web-search/index.ts',
     'Temporary: web-search execution still uses a central provider switch.',
     [
+      ['reachany', 4],
       ['baidu', 9],
       ['bocha', 4],
       ['brave', 4],
@@ -287,6 +344,7 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
     'lib/server/web-search-config.ts',
     'Temporary: web-search URL and option validation are still provider-specific.',
     [
+      ['reachany', 1],
       ['baidu', 11],
       ['tavily', 3],
       ['bocha', 7],
@@ -311,7 +369,7 @@ const TEMPORARY_VENDOR_DEBT: readonly AllowedVendorDebt[] = [
     'Temporary: server persistence composition still imports concrete storage implementations.',
     [
       ['pg', 13],
-      ['s3', 1],
+      ['s3', 3],
     ],
   ),
 ] as const;

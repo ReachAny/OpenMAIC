@@ -1,0 +1,101 @@
+{
+  "targetStages": { "draft": "target-draft", "published": "target-published" },
+  "sourceRefs": {
+    "asset": "ast_0123456789abcdefghjkmnpq",
+    "legacy": "/api/classroom-media/source-stage/media/legacy.png",
+    "provider": "https://media.example.com/video.mp4?x=1"
+  },
+  "expectedIds": {
+    "draft": {
+      "asset": "ast_9900ea9b2w2qkt0jdded736b2w",
+      "legacy": "ast_g0qpwn5nr3m02swspaxf339cvg",
+      "provider": "ast_pkvaajpbd61cxx94rr8fgj4np0"
+    },
+    "published": {
+      "asset": "ast_hp91cymxdcd23z602fm690wk4g",
+      "legacy": "ast_v0psb68wh83ywwavtyet7hhjkr",
+      "provider": "ast_yam5hvhjwfs1gfxg36ybdzjan8"
+    }
+  },
+  "document": {
+    "stage": {
+      "id": "source-stage",
+      "whiteboard": [
+        {
+          "id": "stage-board",
+          "background": {
+            "type": "image",
+            "image": { "src": "ast_0123456789abcdefghjkmnpq", "size": "cover" }
+          },
+          "elements": [
+            {
+              "id": "image",
+              "type": "image",
+              "src": "/api/classroom-media/source-stage/media/legacy.png"
+            },
+            { "id": "audio", "type": "audio", "src": "ast_0123456789abcdefghjkmnpq" },
+            {
+              "id": "video",
+              "type": "video",
+              "src": "https://media.example.com/video.mp4?x=1",
+              "mediaRef": "ast_0123456789abcdefghjkmnpq",
+              "poster": "/api/classroom-media/source-stage/media/legacy.png"
+            }
+          ]
+        }
+      ],
+      "videoManifest": {
+        "https://media.example.com/video.mp4?x=1": { "type": "video", "prompt": "fixture" }
+      }
+    },
+    "scenes": [
+      {
+        "id": "scene-slide",
+        "type": "slide",
+        "content": {
+          "type": "slide",
+          "canvas": {
+            "id": "canvas",
+            "elements": [
+              { "id": "canvas-image", "type": "image", "src": "ast_0123456789abcdefghjkmnpq" }
+            ]
+          }
+        },
+        "whiteboards": [
+          {
+            "id": "scene-board",
+            "elements": [
+              {
+                "id": "board-image",
+                "type": "image",
+                "src": "/api/classroom-media/source-stage/media/legacy.png"
+              }
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "id": "speech",
+            "type": "speech",
+            "text": "fixture",
+            "audioId": "ast_0123456789abcdefghjkmnpq",
+            "audioUrl": "/api/classroom-media/source-stage/audio/speech.mp3"
+          },
+          { "id": "spotlight", "type": "spotlight", "audioId": "ignored" }
+        ]
+      },
+      {
+        "id": "scene-non-slide",
+        "type": "discussion",
+        "content": {
+          "type": "discussion",
+          "canvas": {
+            "elements": [
+              { "id": "ignored", "type": "image", "src": "https://ignored.example/a.png" }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

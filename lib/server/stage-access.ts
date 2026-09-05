@@ -10,6 +10,11 @@
  * generation-complete) go through.
  */
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import {
+  DEFAULT_STAGE,
+  stageConnectionString,
+  type StageName,
+} from '@/lib/persistence/stage-routing';
 
 /** The minimal query surface this module needs; keeps it pool-agnostic for tests. */
 export interface StageAccessQueryable {
@@ -81,8 +86,14 @@ async function queryableFor(): Promise<StageAccessQueryable> {
 }
 
 /** The stage-meta query surface backed by the server persistence provider's pool. */
-export async function getStageAccessDb(): Promise<StageAccessQueryable> {
-  const { pool } = await getServerPersistenceProvider(process.env.DATABASE_URL ?? '');
+export async function getStageAccessDb(
+  stage: StageName = DEFAULT_STAGE,
+): Promise<StageAccessQueryable> {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) throw new Error('DATABASE_URL is required');
+  const { pool } = await getServerPersistenceProvider(
+    stageConnectionString(connectionString, stage),
+  );
   return pool as unknown as StageAccessQueryable;
 }
 

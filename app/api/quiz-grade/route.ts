@@ -6,6 +6,7 @@
  */
 
 import { NextRequest } from 'next/server';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 import { callLLM } from '@/lib/ai/llm';
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
@@ -26,6 +27,8 @@ interface GradeResponse {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let questionSnippet: string | undefined;
   let resolvedPoints: number | undefined;
   try {

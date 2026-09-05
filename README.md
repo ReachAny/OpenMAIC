@@ -348,51 +348,20 @@ mirror separately if those pulls are slow. The pnpm store cache is reused by the
 same BuildKit builder across builds, subject to normal cache garbage collection;
 the cache only improves performance and is not required for a correct build.
 
-### Server-backed persistence (PostgreSQL)
+### ReachAcademy server-backed persistence
 
-The `server-persistence` profile runs exactly two containers: the OpenMAIC app
-and PostgreSQL. The persistence HTTP server is embedded in the app at
-`/api/persistence`; there is no standalone persistence service.
+In ReachAcademy mode `/api/persistence` is a server-side boundary backed by the
+deployment-provided PostgreSQL catalogs. `NEXT_PUBLIC_PERSISTENCE=1` remains the
+build-time feature switch, but browser-visible persistence tokens and anonymous
+owner fallbacks are retired. Every request must carry the HttpOnly OpenMAIC
+bridge session; stage and principal are derived from its verified grant.
 
-```bash
-cp .env.example .env.local
-printf '\nDATABASE_URL=postgres://openmaic:openmaic-dev@postgres:5432/openmaic\nPERSISTENCE_DEV_TOKEN=openmaic-local-dev\n' >> .env.local
-NEXT_PUBLIC_PERSISTENCE=1 NEXT_PUBLIC_PERSISTENCE_TOKEN=openmaic-local-dev docker compose --profile server-persistence up --build
-```
-
-Add your provider API keys to `.env.local` as usual. Runtime sessions and course
-documents become server-backed; device-scoped KV data (including the anonymous
-device learner key and playback position) remains in the browser. Existing
-browser course data is copied into the configured server store lazily, one
-course at a time when it is first accessed, using the same verified migration
-path as browser persistence.
-
-`NEXT_PUBLIC_PERSISTENCE` is a **build-time switch** compiled into the browser
-bundle. A build with it enabled must be deployed with a working runtime
-`DATABASE_URL` and `PERSISTENCE_DEV_TOKEN`, while
-`NEXT_PUBLIC_PERSISTENCE_TOKEN` must match that server token at build time.
-Otherwise the browser selects HTTP persistence but the embedded endpoint
-returns configuration/authentication/initialization errors; the home page shows
-a persistence-unavailable toast and keeps the prior course list instead of
-misleadingly displaying an empty library.
-
-`PERSISTENCE_DEV_TOKEN` and `NEXT_PUBLIC_PERSISTENCE_TOKEN` are **not a
-secret in any meaningful sense**: the `NEXT_PUBLIC_` token is compiled into
-the public JavaScript bundle, fully visible to every visitor, and therefore
-provides **no confidentiality and no user isolation whatsoever** — anyone who
-can load the page can extract it and read or write **every** learner partition
-and **all** documents by choosing an `x-learner-key`. Its only purpose is to
-keep unrelated network scanners out of an endpoint on a trusted network. This
-is suitable only for localhost or trusted-network, single-user deployments. Before production,
-replace
-[`lib/persistence/server-auth.ts`](lib/persistence/server-auth.ts) with real
-session verification that derives the learner partition from server-controlled
-identity, and change the document/merge/admin authorization policies as
-appropriate.
-
-`PERSISTENCE_POSTGRES_PASSWORD` initializes the PostgreSQL role only when the
-data directory is empty; changing it later does not rotate an existing
-`openmaic-postgres` volume. For a disposable local database, run
+The `openmaic_draft` and `openmaic_published` schemas and required catalog tables
+must be provisioned before deployment. OpenMAIC performs read-only catalog
+readiness checks and never creates or alters schemas at runtime. `/api/health` is
+liveness only; `/api/ready` additionally checks Redis, S3 fail-closed settings,
+and `data/migration/openmaic-v1-import-evidence.json` (missing evidence keeps
+readiness at 503 until an authorized migration captures/imports legacy bytes).
 `docker compose --profile server-persistence down -v`, set the new password and
 matching `DATABASE_URL`, then start the profile again. To preserve data, connect
 as an administrator and run `ALTER ROLE openmaic WITH PASSWORD 'new-password';`,
@@ -558,7 +527,9 @@ can select AliDocMind or the optional local ffmpeg/ffprobe provider.
 
 Under the hood, agent sessions are database-backed with leases, heartbeats,
 crash resume, cancellation, and follow-up steering, and database-maintained
-revision counters keep per-stage and per-scene freshness monotonic so the
+revision counters keep per-stage and per-scene freshness monotonic. Application
+writes suppress legacy trigger wakeups inside their transaction and emit one
+transaction-bound wakeup after the revision updates, so the
 workbench refetches only the scenes that changed. Server routes resolve LLM,
 media, ASR/TTS, and search configuration provider-neutrally: credentials never
 reach the browser, uniform `<CAP>_<PREFIX>_ENABLED=false` switches can force
@@ -856,7 +827,7 @@ Optional config in `~/.openclaw/openclaw.json`:
 - **Speech Recognition** — Talk to your AI teacher using your microphone
 - **Web Search** — Agents search the web for up-to-date information during class
 - **Provider controls** — Server-side capability discovery, model resolution, force-off switches, and fail-loud routing keep deployments explicit
-- **Course freshness** — Database-triggered per-scene revision counters, freshness events, and targeted scene fetches keep workbench views synchronized
+- **Course freshness** — Monotonic per-scene revision counters, transaction-bound freshness events, and targeted scene fetches keep workbench views synchronized
 - **i18n** — Interface supports 12 locales across 11 languages: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, Russian, Arabic, Portuguese (Brazil), Spanish (Mexico), French, Vietnamese, and German
 - **Dark Mode** — Easy on the eyes for late-night study sessions
 

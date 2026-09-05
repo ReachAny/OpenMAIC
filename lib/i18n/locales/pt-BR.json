@@ -992,6 +992,8 @@
     "deleteFolderConfirmRemove": "Isto remove a pasta e seus cursos, incluindo o histórico de chat.",
     "notFound": "Curso não encontrado",
     "notFoundDesc": "Este curso não existe ou foi excluído.",
+    "authorizationRequired": "Não foi possível abrir o curso OpenMAIC",
+    "authorizationRequiredDesc": "Sua sessão ou autorização do curso expirou. Entre novamente pelo Teacher.",
     "backToHome": "Voltar ao início"
   },
   "upload": {

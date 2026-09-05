@@ -251,7 +251,50 @@ export async function fetchClassroomFromApi(
   _deps: DocumentMigrationDeps = {},
 ): Promise<ClassroomPayload | null> {
   const res = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
-  if (!res.ok) return null;
+  // A missing/expired bridge grant is not evidence that the classroom was
+  // deleted. Preserve that distinction so the workspace can render an
+  // authorization error instead of the misleading "course not found" state.
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('OPENMAIC_AUTH_REQUIRED');
+  }
+  if (!res.ok) {
+    // ReachAcademy creates the authoritative module/version rows before the
+    // OpenMAIC document exists. A teacher's draft grant is the only authority
+    // allowed to cross this boundary, so the classroom endpoint can safely
+    // create an empty document shell on the first read. Published/read-only
+    // grants are rejected by the same endpoint and remain fail-closed.
+    if (res.status === 404) {
+      const bootstrap = await fetch('/api/classroom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stage: {
+            id: classroomId,
+            name: `OpenMAIC ${classroomId}`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          },
+          scenes: [],
+        }),
+      });
+      if (bootstrap.status === 401 || bootstrap.status === 403) {
+        throw new Error('OPENMAIC_AUTH_REQUIRED');
+      }
+      if (bootstrap.ok || bootstrap.status === 409) {
+        const retry = await fetch(`/api/classroom?id=${encodeURIComponent(classroomId)}`);
+        if (retry.status === 401 || retry.status === 403) {
+          throw new Error('OPENMAIC_AUTH_REQUIRED');
+        }
+        if (!retry.ok) return null;
+        const retryJson = (await retry.json()) as {
+          success?: boolean;
+          classroom?: ClassroomPayload;
+        };
+        return retryJson.success && retryJson.classroom ? retryJson.classroom : null;
+      }
+    }
+    return null;
+  }
 
   const json = (await res.json()) as {
     success?: boolean;

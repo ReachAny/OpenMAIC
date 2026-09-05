@@ -73,6 +73,12 @@ export const WEB_SEARCH_PROVIDERS: Record<WebSearchProviderId, WebSearchProvider
     requiresBaseUrl: true,
     endpointPath: '/search',
   },
+  reachany: {
+    id: 'reachany',
+    name: 'ReachAny Managed Search',
+    requiresApiKey: true,
+    endpointPath: '/v1/web/search',
+  },
 };
 
 /** Default model for Claude web search (Sonnet tier: balanced speed/cost for search + summarize). */

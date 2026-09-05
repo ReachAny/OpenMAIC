@@ -3,6 +3,8 @@ import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { proxyFetch } from '@/lib/server/proxy-fetch';
 import { resolveRenderServiceUrl } from '@/lib/server/render-service';
 import { createLogger } from '@/lib/logger';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 
 const log = createLogger('ExportVideo Job API');
 
@@ -10,7 +12,20 @@ export const dynamic = 'force-dynamic';
 
 /** Relay a render job's status. Polled by the client while a render runs. */
 export async function GET(req: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   const { jobId } = await context.params;
+  try {
+    await createOpenMaicJobAuthorizationManager().checkpoint('export', jobId, {
+      sessionId: auth.authorization.sessionId,
+      stageId: auth.authorization.grant.stageId,
+      sub: auth.authorization.grant.sub,
+      principal: auth.authorization.principal,
+      principalSurface: auth.authorization.classification.principal,
+    });
+  } catch {
+    return apiError('ASSET_NOT_FOUND', 404, 'Render job not found');
+  }
   const resolved = resolveRenderServiceUrl();
   if ('error' in resolved) {
     return apiError('PROVIDER_DISABLED', 501, 'Render service is not configured');
@@ -35,7 +50,20 @@ export async function GET(req: NextRequest, context: { params: Promise<{ jobId: 
 
 /** Cancel a queued/running render job. */
 export async function DELETE(req: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   const { jobId } = await context.params;
+  try {
+    await createOpenMaicJobAuthorizationManager().checkpoint('export', jobId, {
+      sessionId: auth.authorization.sessionId,
+      stageId: auth.authorization.grant.stageId,
+      sub: auth.authorization.grant.sub,
+      principal: auth.authorization.principal,
+      principalSurface: auth.authorization.classification.principal,
+    });
+  } catch {
+    return apiError('ASSET_NOT_FOUND', 404, 'Render job not found');
+  }
   const resolved = resolveRenderServiceUrl();
   if ('error' in resolved) {
     return apiError('PROVIDER_DISABLED', 501, 'Render service is not configured');

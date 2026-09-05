@@ -30,6 +30,7 @@ import {
   MINERU_SELFHOST_MIMES,
   PLAIN_TEXT_MIMES,
   LOCAL_FFMPEG_MEDIA_MIMES,
+  REACHANY_DOCUMENT_MIMES,
 } from '../mime';
 import type { DocumentExtractorCapabilities, MediaExtractorCapabilities } from '../types';
 
@@ -131,6 +132,21 @@ const DOCUMENT_EXTRACTOR_MANIFEST: Record<string, DocumentExtractorManifestEntry
       layout: true,
       ocr: true,
       async: true,
+    },
+  },
+  reachany: {
+    id: 'reachany',
+    displayName: 'ReachAny Managed PDF',
+    version: '1',
+    supportedMimeTypes: REACHANY_DOCUMENT_MIMES,
+    capabilities: {
+      text: true,
+      images: true,
+      tables: true,
+      formulas: true,
+      layout: true,
+      ocr: true,
+      async: false,
     },
   },
 };

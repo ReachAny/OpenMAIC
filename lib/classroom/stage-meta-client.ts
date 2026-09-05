@@ -39,9 +39,16 @@ export async function fetchStageMeta(
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
 ): Promise<StageMetaResult> {
   try {
+    const stage =
+      typeof window === 'undefined'
+        ? undefined
+        : (new URLSearchParams(window.location.search).get('stage') ?? undefined);
     const response = await fetchImpl(`/api/stage-meta/${encodeURIComponent(stageId)}`, {
       credentials: 'include',
       cache: 'no-store',
+      ...(stage === 'draft' || stage === 'published'
+        ? { headers: { 'x-openmaic-stage': stage } }
+        : {}),
     });
     if (!response.ok) {
       if (response.status === 404) return { outcome: 'absent' };

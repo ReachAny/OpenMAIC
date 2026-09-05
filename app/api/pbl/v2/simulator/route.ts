@@ -14,6 +14,7 @@
  */
 
 import type { NextRequest } from 'next/server';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 import { createLogger } from '@/lib/logger';
 import { apiError } from '@/lib/server/api-response';
@@ -37,6 +38,8 @@ interface SimulatorRequest {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let body: SimulatorRequest;
   try {
     body = (await req.json()) as SimulatorRequest;

@@ -39,6 +39,30 @@ describe('resolveClassroomExit', () => {
       href: '/',
     });
   });
+
+  /**
+   * A ReachAcademy-launched course has no OpenMAIC home behind it — this deck list is not the
+   * visitor's. The `returnTo=home` sentinel keeps its own meaning: it is an in-app instruction
+   * from Pro playback, not a host URL, and the two never collide.
+   */
+  it('leaves the app for a hosted course, below an explicit workspace source', () => {
+    const host = 'https://teacher.reachany.cn/teacher/courses/course-1';
+    expect(resolveClassroomExit({ searchParams: params(), hostReturnUrl: host })).toEqual({
+      kind: 'host',
+      href: host,
+    });
+    expect(
+      resolveClassroomExit({ searchParams: params('returnTo=home'), hostReturnUrl: host }),
+    ).toEqual({ kind: 'host', href: host });
+    expect(
+      resolveClassroomExit({ searchParams: params('from=workspace'), hostReturnUrl: host }),
+    ).toEqual({ kind: 'push', href: '/workspace' });
+    // An expired or absent grant falls back to the ordinary in-app exit.
+    expect(resolveClassroomExit({ searchParams: params(), hostReturnUrl: null })).toEqual({
+      kind: 'push',
+      href: '/',
+    });
+  });
 });
 
 describe('exitClassroom', () => {
@@ -57,6 +81,21 @@ describe('exitClassroom', () => {
 
     expect(router.push).toHaveBeenCalledWith('/workspace');
   });
+
+  it('leaves the app with a document navigation for a hosted course', () => {
+    const router = { push: vi.fn() };
+    const assign = vi.fn();
+    vi.stubGlobal('location', { assign });
+    try {
+      exitClassroom(router, params(), 'https://teacher.reachany.cn/teacher/courses/course-1');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    // The Next router cannot serve another origin, so this must not be a client-side push.
+    expect(router.push).not.toHaveBeenCalled();
+    expect(assign).toHaveBeenCalledWith('https://teacher.reachany.cn/teacher/courses/course-1');
+  });
 });
 
 describe('classroom navigation metadata', () => {
@@ -70,5 +109,13 @@ describe('classroom navigation metadata', () => {
       'workbench.common.backToWorkspace',
     );
     expect(classroomExitLabelKey(params())).toBe('generation.backToHome');
+  });
+
+  it('names the course rather than a home the visitor does not have', () => {
+    const host = 'https://teacher.reachany.cn/teacher/courses/course-1';
+    expect(classroomExitLabelKey(params(), host)).toBe('workbench.launch.openMaicBack');
+    expect(classroomExitLabelKey(params('from=workspace'), host)).toBe(
+      'workbench.common.backToWorkspace',
+    );
   });
 });

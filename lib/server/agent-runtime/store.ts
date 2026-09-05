@@ -1,6 +1,5 @@
 import {
   PgAgentSessionStore,
-  ensureAgentSessionSchema,
   type Queryable,
   type WithTransaction,
 } from '@openmaic/storage/agent-session/pg';
@@ -8,6 +7,7 @@ import { extractObservedUrls } from '@openmaic/storage';
 import type { Pool } from 'pg';
 
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
 import { notifyDurableAgentEvent } from './event-notify-bus';
 
 interface AgentSessionStoreState {
@@ -43,8 +43,9 @@ export function nodePostgresTransaction(pool: Pool): WithTransaction {
 }
 
 async function createAgentSessionStore(connectionString: string): Promise<PgAgentSessionStore> {
-  const { pool } = await getServerPersistenceProvider(connectionString);
-  await ensureAgentSessionSchema(pool);
+  const { pool } = await getServerPersistenceProvider(
+    stageConnectionString(connectionString, 'draft'),
+  );
   // URL observations from user-authored prompt/message text are registered
   // inside the same business transaction that creates the session / posts the
   // message (reference session-store semantics), so they commit atomically and

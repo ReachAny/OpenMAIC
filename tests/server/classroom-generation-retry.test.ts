@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   generateSceneActions: vi.fn(),
   createSceneWithActions: vi.fn(),
   persistClassroom: vi.fn(),
+  saveDocument: vi.fn(),
   callLLM: vi.fn(),
 }));
 const PBLGenerationErrorMock = vi.hoisted(
@@ -55,6 +56,9 @@ vi.mock('@/lib/server/scene-generation', () => ({
 vi.mock('@/lib/server/classroom-storage', () => ({
   persistClassroom: mocks.persistClassroom,
 }));
+vi.mock('@/lib/server/agent-runtime/owner-scoped-documents', () => ({
+  getOwnerScopedDocumentStore: vi.fn(async () => ({ saveDocument: mocks.saveDocument })),
+}));
 
 vi.mock('@/lib/logger', () => ({
   createLogger: () => ({
@@ -86,6 +90,7 @@ async function generateWithProgress() {
     { requirement: 'Teach retry basics' },
     {
       baseUrl: 'http://localhost',
+      coursePrincipal: 'course-owner',
       onProgress: (event) => {
         progress.push({ message: event.message });
       },

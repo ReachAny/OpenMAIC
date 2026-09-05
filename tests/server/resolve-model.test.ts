@@ -27,6 +27,8 @@ vi.mock('@/lib/ai/providers', async (importOriginal) => {
 
 vi.mock('@/lib/server/provider-config', () => ({
   isServerConfiguredProvider: () => mocks.serverManaged,
+  assertReachAnyProviderAllowed: () => undefined,
+  assertReachAnyManagedModelAllowed: async () => undefined,
   resolveApiKey: (_id: string, clientKey: string) => clientKey || 'server-key',
   resolveBaseUrl: (_id: string, clientBaseUrl?: string) => clientBaseUrl,
   resolveProxy: () => undefined,

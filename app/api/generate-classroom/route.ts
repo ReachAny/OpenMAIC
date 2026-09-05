@@ -6,6 +6,8 @@ import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
+import { authorizeOpenMaicRequest } from '@/lib/reachacademy/bridge/guard';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 
 const log = createLogger('GenerateClassroom API');
 
@@ -18,6 +20,7 @@ export async function POST(req: NextRequest) {
     requirementSnippet = rawBody.requirement?.substring(0, 60);
     const body: GenerateClassroomInput = {
       requirement: rawBody.requirement || '',
+      ...(rawBody.requestedStageId ? { requestedStageId: rawBody.requestedStageId } : {}),
       ...(rawBody.pdfContent ? { pdfContent: rawBody.pdfContent } : {}),
 
       ...(rawBody.enableWebSearch != null ? { enableWebSearch: rawBody.enableWebSearch } : {}),
@@ -40,12 +43,25 @@ export async function POST(req: NextRequest) {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: requirement');
     }
 
+    const authorization = await authorizeOpenMaicRequest(req, {
+      stageId: body.requestedStageId,
+    });
+
     const baseUrl = buildRequestOrigin(req);
     const jobId = nanoid(10);
+    await createOpenMaicJobAuthorizationManager().create({
+      sessionId: authorization.sessionId,
+      stageId: authorization.grant.stageId,
+      jobKind: 'classroom',
+      jobId,
+      jobProfile: 'teacher.classroom-generate',
+    });
     const job = await createClassroomGenerationJob(jobId, body);
     const pollUrl = `${baseUrl}/api/generate-classroom/${jobId}`;
 
-    after(() => runClassroomGenerationJob(jobId, body, baseUrl));
+    after(() =>
+      runClassroomGenerationJob(jobId, body, baseUrl, authorization.grant.coursePrincipal),
+    );
 
     return apiSuccess(
       {

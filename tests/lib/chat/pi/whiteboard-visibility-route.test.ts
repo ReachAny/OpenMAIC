@@ -3,11 +3,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { queryWhiteboardVisibility } from '@/lib/chat/pi/whiteboard-visibility';
 
+const mocks = vi.hoisted(() => ({ authorizeOpenMaicRequest: vi.fn() }));
+
+vi.mock('@/lib/reachacademy/bridge/guard', () => ({
+  authorizeOpenMaicRequest: mocks.authorizeOpenMaicRequest,
+}));
+
 function request(
   body: unknown,
   headers: Record<string, string> = {
-    authorization: 'Bearer test-token',
-    'x-learner-key': 'learner-1',
+    cookie: 'reachany_openmaic_session=session-id',
+    'x-openmaic-stage-id': 'stage-1',
   },
 ): NextRequest {
   return new Request('http://localhost/api/chat/pi/whiteboard-visibility', {
@@ -18,7 +24,10 @@ function request(
 }
 
 describe('whiteboard visibility callback route', () => {
-  beforeEach(() => vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'test-token'));
+  beforeEach(() => {
+    mocks.authorizeOpenMaicRequest.mockReset();
+    mocks.authorizeOpenMaicRequest.mockResolvedValue({ grant: { learnerKey: 'learner-1' } });
+  });
   afterEach(() => vi.unstubAllEnvs());
 
   it('does not let malformed, unauthenticated, or mismatched callbacks settle the owner', async () => {
@@ -34,15 +43,9 @@ describe('whiteboard visibility callback route', () => {
     await vi.waitFor(() => expect(queryId).not.toBe(''));
     const { POST } = await import('@/app/api/chat/pi/whiteboard-visibility/route');
 
+    mocks.authorizeOpenMaicRequest.mockRejectedValueOnce(new Error('session invalid'));
     expect(
-      (
-        await POST(
-          request(
-            { queryId, stageId: 'stage-1', visibility: 'closed' },
-            { authorization: 'Bearer wrong', 'x-learner-key': 'learner-1' },
-          ),
-        )
-      ).status,
+      (await POST(request({ queryId, stageId: 'stage-1', visibility: 'closed' }, {}))).status,
     ).toBe(401);
     expect(
       (await POST(request({ queryId, stageId: 'wrong-stage', visibility: 'closed' }))).status,

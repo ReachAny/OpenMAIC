@@ -1,12 +1,19 @@
 import { randomUUID } from 'node:crypto';
 
 import { PGlite } from '@electric-sql/pglite';
-import { NextRequest } from 'next/server';
+import { ensureAgentSessionSchema } from '@openmaic/storage/agent-session/pg';
+import { ensureAssetSchema } from '@openmaic/storage/asset/pg';
+import { ensureDocumentSchema } from '@openmaic/storage/document/pg';
+import { ensureAgentSessionMaterialSchema } from '@openmaic/storage/material/pg';
+import { ensureSchema as ensureRuntimeSchema } from '@openmaic/storage/runtime/pg';
+import { ensureUserSkillSchema } from '@openmaic/storage/skill/pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { validateAppScene, validateAppStage } from '@/lib/document-store/validators';
+import { ensureOwnerMaterialSchema } from '@/lib/persistence/owner-materials';
 import { createOwnerBoundDocumentStore } from '@/lib/persistence/owner-bound-document-store';
-import { StageAccessError } from '@/lib/persistence/stage-meta';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
+import { ensureStageMetaSchema, StageAccessError } from '@/lib/persistence/stage-meta';
 
 class PGlitePool {
   constructor(readonly db: PGlite) {}
@@ -65,12 +72,38 @@ describe('reference-fidelity stage access', () => {
     vi.resetModules();
     vi.unstubAllEnvs();
     vi.stubEnv('DATABASE_URL', `postgres://stage-access-${randomUUID()}`);
-    vi.stubEnv('PERSISTENCE_DEV_TOKEN', 'configured');
     vi.stubEnv('ASSET_S3_BUCKET', '');
-    vi.stubEnv('OPENMAIC_AGENT_RUNTIME_ENABLED', 'true');
     const db = new PGlite();
     await db.waitReady;
+    await db.query('CREATE SCHEMA openmaic_draft');
+    await db.query('SET search_path TO openmaic_draft');
+    await ensureAssetSchema(db);
+    await ensureDocumentSchema(db);
+    await ensureRuntimeSchema(db);
+    await ensureAgentSessionSchema(db);
+    await ensureAgentSessionMaterialSchema(db);
+    await ensureUserSkillSchema(db);
+    await ensureStageMetaSchema(db);
+    await ensureOwnerMaterialSchema(db);
     pool = new PGlitePool(db);
+    vi.doMock('@/lib/reachacademy/bridge/guard', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/reachacademy/bridge/guard')>()),
+      authorizeOpenMaicRequest: vi.fn(async (request: Request) => {
+        const stageId = decodeURIComponent(new URL(request.url).pathname.split('/documents/')[1]!);
+        const cookie = request.headers.get('cookie') ?? '';
+        const coursePrincipal = cookie.includes(visitorCookie)
+          ? `anon:${visitorCookie}`
+          : `anon:${ownerCookie}`;
+        return {
+          grant: {
+            stageId,
+            stage: 'draft',
+            coursePrincipal,
+            learnerKey: `${coursePrincipal}:learner`,
+          },
+        };
+      }),
+    }));
   });
 
   afterEach(async () => {
@@ -79,7 +112,7 @@ describe('reference-fidelity stage access', () => {
   });
 
   it('loads an agent-created stage through the browser path using the same owner cookie', async () => {
-    const connectionString = process.env.DATABASE_URL!;
+    const connectionString = stageConnectionString(process.env.DATABASE_URL!, 'draft');
     const { getServerPersistenceProvider } = await import('@/lib/persistence/server-provider');
     const provider = await getServerPersistenceProvider(connectionString, () => pool as never);
     const stageId = 'stage-agent-browser-regression';
@@ -99,7 +132,7 @@ describe('reference-fidelity stage access', () => {
   });
 
   it('allows capability reads, refuses foreign writes, and filters the owner library', async () => {
-    const connectionString = process.env.DATABASE_URL!;
+    const connectionString = stageConnectionString(process.env.DATABASE_URL!, 'draft');
     const { getServerPersistenceProvider } = await import('@/lib/persistence/server-provider');
     await getServerPersistenceProvider(connectionString, () => pool as never);
     const stageId = 'stage-capability-policy';
@@ -137,25 +170,14 @@ describe('reference-fidelity stage access', () => {
       error: { code: 'FORBIDDEN_DOCUMENTS' },
     });
 
-    const { GET: listStages } = await import('@/app/api/stages/route');
-    const ownerList = await listStages(
-      new NextRequest('http://localhost/api/stages', {
-        headers: { cookie: `anonymous_id=${ownerCookie}` },
-      }),
-    );
-    const visitorList = await listStages(
-      new NextRequest('http://localhost/api/stages', {
-        headers: { cookie: `anonymous_id=${visitorCookie}` },
-      }),
-    );
-    await expect(ownerList.json()).resolves.toMatchObject({
-      stages: [expect.objectContaining({ id: stageId })],
-    });
-    await expect(visitorList.json()).resolves.toEqual({ stages: [] });
+    await expect(owner.listDocuments()).resolves.toEqual([
+      expect.objectContaining({ id: stageId }),
+    ]);
+    await expect(visitor.listDocuments()).resolves.toEqual([]);
   });
 
   it('tombstones deletions and permanently retires the stage id', async () => {
-    const connectionString = process.env.DATABASE_URL!;
+    const connectionString = stageConnectionString(process.env.DATABASE_URL!, 'draft');
     const { getServerPersistenceProvider } = await import('@/lib/persistence/server-provider');
     await getServerPersistenceProvider(connectionString, () => pool as never);
     const stageId = 'stage-retired-id';

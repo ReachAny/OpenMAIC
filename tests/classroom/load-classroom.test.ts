@@ -3,6 +3,7 @@ import {
   applyClassroomStageAndScenes,
   commitMigratedAgentConfigsToStore,
   discardRestoredMediaTasks,
+  fetchClassroomFromApi,
   mergeLegacyAgentFallbacks,
   resetLegacyAgentFallbackProbes,
   rosterNeedsLegacyFallback,
@@ -1113,5 +1114,55 @@ describe('discardRestoredMediaTasks', () => {
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:image');
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:poster');
     revokeObjectURL.mockRestore();
+  });
+});
+
+describe('fetchClassroomFromApi', () => {
+  it('preserves an unauthorized response instead of bootstrapping or reporting a missing course', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('forbidden', { status: 403 }),
+    );
+
+    await expect(fetchClassroomFromApi('stage-forbidden')).rejects.toThrow(
+      'OPENMAIC_AUTH_REQUIRED',
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toBeUndefined();
+    fetchMock.mockRestore();
+  });
+
+  it('bootstraps an authorized empty draft after the initial 404 and reloads it', async () => {
+    // The first GET is missing, the bootstrap succeeds, and the retry returns
+    // the newly-created document. The route itself enforces the stage grant;
+    // this helper only supplies the idempotent client sequence.
+    let readCount = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.startsWith('/api/classroom?id=')) {
+        readCount += 1;
+        if (readCount === 1) return new Response('not found', { status: 404 });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            classroom: { stage: makeStage('stage-new'), scenes: [] },
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === '/api/classroom' && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body));
+        expect(body.stage.id).toBe('stage-new');
+        expect(body.scenes).toEqual([]);
+        return new Response(JSON.stringify({ success: true }), { status: 201 });
+      }
+      throw new Error(`unexpected request: ${url}`);
+    });
+
+    await expect(fetchClassroomFromApi('stage-new')).resolves.toEqual({
+      stage: makeStage('stage-new'),
+      scenes: [],
+    });
+    expect(readCount).toBe(2);
+    fetchMock.mockRestore();
   });
 });

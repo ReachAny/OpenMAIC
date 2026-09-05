@@ -25,6 +25,7 @@ export interface SceneTtsInput {
   force: boolean;
   roster?: readonly GeneratedAgentConfig[] | null;
   signal?: AbortSignal;
+  coursePrincipal?: string;
 }
 
 function enabledProviderIds(): TTSProviderId[] {
@@ -103,13 +104,14 @@ export async function synthesizeSceneNarration(input: SceneTtsInput): Promise<Sc
       // element / fetch fallback plays. Stamp the same relative path on both.
       const audioId = await persistClassroomMediaBytes({
         stageId: input.scene.stageId,
+        coursePrincipal: input.coursePrincipal ?? '',
         bytes: Buffer.from(audio.audio),
         mime: audioMime(audio.format),
         prefix: `tts-${action.id}`,
         signal: input.signal,
       });
       speech.audioId = audioId;
-      (speech as LegacySpeechAction).audioUrl = audioId;
+      delete (speech as LegacySpeechAction).audioUrl;
       generated += 1;
     } catch (error) {
       if (input.signal?.aborted) throw error;

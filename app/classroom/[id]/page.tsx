@@ -7,7 +7,7 @@ import { useSettingsStore } from '@/lib/store/settings';
 import { claimStageSceneLoadToken, isCurrentStageSceneLoadToken } from '@/lib/store/stage';
 import { loadImageMapping } from '@/lib/utils/image-storage';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { useSceneGenerator } from '@/lib/hooks/use-scene-generator';
 import { useMediaGenerationStore } from '@/lib/store/media-generation';
 import { useWhiteboardHistoryStore } from '@/lib/store/whiteboard-history';
@@ -22,12 +22,15 @@ import {
   defaultClassroomLoadDeps,
   runClassroomLoad,
 } from '@/lib/classroom/load-classroom';
+import { classroomModeFromSearchParams } from '@/lib/workbench/classroom-exit';
 
 const log = createLogger('Classroom');
 
 export default function ClassroomDetailPage() {
   const params = useParams();
   const classroomId = params?.id as string;
+  const searchParams = useSearchParams();
+  const requestedMode = classroomModeFromSearchParams(searchParams);
 
   const { loadFromStorage } = useStageStore();
 
@@ -74,6 +77,15 @@ export default function ClassroomDetailPage() {
         log,
       });
 
+      // The mode is transient UI state, not part of the persisted document.
+      // Restore an explicit route request only after the document boundary has
+      // loaded (the loader intentionally resets mode to playback on every
+      // course switch). Stage still applies its normal editability/ownership
+      // guard and will immediately leave edit mode when the grant is read-only.
+      if (isEffectCurrent() && requestedMode) {
+        useStageStore.getState().setMode(requestedMode);
+      }
+
       // The stage-meta sidecar resolves the viewer-facing ownership facts the
       // document seam does not carry — `isOwner` decides read-only vs editable
       // (see `stage-meta-client.ts`). Run it strictly AFTER the load applied
@@ -105,7 +117,7 @@ export default function ClassroomDetailPage() {
           .catch(() => noteStageOwnership(classroomId, false, null));
       }
     },
-    [classroomId, loadFromStorage],
+    [classroomId, loadFromStorage, requestedMode],
   );
 
   useEffect(() => {

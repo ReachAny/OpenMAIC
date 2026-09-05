@@ -12,6 +12,7 @@ const Params = Type.Object({
 
 export interface MaterialMediaDeps {
   sessionId: string;
+  coursePrincipal?: string;
   getMaterial?: typeof getSessionMaterial;
   readRawBytes?: typeof resolveSessionMaterialRawAsset;
 }
@@ -58,6 +59,7 @@ export function buildMaterialMediaTool(deps: MaterialMediaDeps): AgentTool<never
       }
       const src = await persistClassroomMediaBytes({
         stageId: params.stageId,
+        coursePrincipal: deps.coursePrincipal ?? '',
         bytes: source.bytes,
         mime: source.mime,
         prefix: `material-${material.id}`,

@@ -14,11 +14,9 @@ const mocks = vi.hoisted(() => ({
   reclaimStaleOwnerMaterialUploads: vi.fn(),
   finalizeOwnerMaterial: vi.fn(),
   abandonOwnerMaterial: vi.fn(),
-  byteStore: {
-    put: vi.fn(),
-    get: vi.fn(),
-    delete: vi.fn(),
-  },
+  putServerAssetBytes: vi.fn(),
+  removeServerAssetBytes: vi.fn(),
+  updateOwnerMaterialObjectKey: vi.fn(),
   queryPool: {
     query: vi.fn(),
     connect: vi.fn(),
@@ -27,6 +25,16 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/config/feature-flags', () => ({
   isAgentRuntimeConfigured: () => mocks.runtimeConfigured,
+}));
+vi.mock('@/lib/reachacademy/bridge/route-auth', () => ({
+  requireOpenMaicRoute: vi.fn(async () => ({ authorization: { principal: 'owner-1' } })),
+}));
+vi.mock('@/lib/reachacademy/bridge/guard', () => ({
+  authorizeOpenMaicRequest: vi.fn(async () => ({
+    principal: 'owner-1',
+    grant: { coursePrincipal: 'owner-1' },
+  })),
+  openMaicAuthorizationResponse: vi.fn(() => new Response('denied', { status: 401 })),
 }));
 vi.mock('@/lib/server/agent-runtime/owner', () => ({
   resolveRequestOwnerId: mocks.resolveRequestOwnerId,
@@ -46,8 +54,9 @@ vi.mock('@/lib/persistence/server-provider', () => ({
     pool: mocks.queryPool,
   }),
 }));
-vi.mock('@/lib/server/materials/bytes', () => ({
-  getMaterialByteStore: () => mocks.byteStore,
+vi.mock('@/lib/server/server-asset-bytes', () => ({
+  putServerAssetBytes: mocks.putServerAssetBytes,
+  removeServerAssetBytes: mocks.removeServerAssetBytes,
 }));
 vi.mock('@/lib/persistence/owner-materials', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/persistence/owner-materials')>();
@@ -57,6 +66,7 @@ vi.mock('@/lib/persistence/owner-materials', async (importOriginal) => {
     reclaimStaleOwnerMaterialUploads: mocks.reclaimStaleOwnerMaterialUploads,
     finalizeOwnerMaterial: mocks.finalizeOwnerMaterial,
     abandonOwnerMaterial: mocks.abandonOwnerMaterial,
+    updateOwnerMaterialObjectKey: mocks.updateOwnerMaterialObjectKey,
   };
 });
 
@@ -113,9 +123,9 @@ beforeEach(() => {
     ownerMaterial({ id }),
   );
   mocks.abandonOwnerMaterial.mockResolvedValue(undefined);
-  mocks.byteStore.put.mockResolvedValue(undefined);
-  mocks.byteStore.get.mockResolvedValue(null);
-  mocks.byteStore.delete.mockResolvedValue(undefined);
+  mocks.putServerAssetBytes.mockResolvedValue('ast_owner_material');
+  mocks.removeServerAssetBytes.mockResolvedValue(undefined);
+  mocks.updateOwnerMaterialObjectKey.mockResolvedValue(undefined);
 });
 
 describe('GET /api/materials', () => {
@@ -226,12 +236,9 @@ describe('POST /api/materials', () => {
         maxTotalBytes: agentRuntimeConfig.maxMaterialBytesPerOwner,
       }),
     );
-    expect(mocks.byteStore.put).toHaveBeenCalledWith(
-      `materials/owner-1/${body.materialId}`,
-      expect.any(Buffer),
-      'application/pdf',
+    expect(mocks.putServerAssetBytes).toHaveBeenCalledWith(
+      expect.objectContaining({ principal: 'owner-1', mime: 'application/pdf' }),
     );
-    expect((mocks.byteStore.put.mock.calls[0]![1] as Buffer).toString()).toBe('hello');
     expect(mocks.finalizeOwnerMaterial).toHaveBeenCalledWith(
       expect.anything(),
       body.materialId,
@@ -245,7 +252,7 @@ describe('POST /api/materials', () => {
       'owner-1',
       expect.any(Function),
     );
-    const putCall = mocks.byteStore.put.mock.invocationCallOrder[0]!;
+    const putCall = mocks.putServerAssetBytes.mock.invocationCallOrder[0]!;
     const finalizeCall = mocks.finalizeOwnerMaterial.mock.invocationCallOrder[0]!;
     expect(putCall).toBeLessThan(finalizeCall);
   });
@@ -282,11 +289,11 @@ describe('POST /api/materials', () => {
     expect(response.status).toBe(429);
     // The reclaim of stale uploads is a separate pre-step; the quota rejection
     // itself never touches the byte store.
-    expect(mocks.byteStore.delete).not.toHaveBeenCalled();
+    expect(mocks.removeServerAssetBytes).not.toHaveBeenCalled();
   });
 
   it('abandons the reservation and answers 500 when the byte store fails', async () => {
-    mocks.byteStore.put.mockRejectedValue(new Error('material byte store unavailable'));
+    mocks.putServerAssetBytes.mockRejectedValue(new Error('material byte store unavailable'));
     const response = await post(Buffer.from('hello'));
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ errorCode: 'INTERNAL_ERROR' });
@@ -298,18 +305,16 @@ describe('POST /api/materials', () => {
     const response = await post(Buffer.from('hello'));
     expect(response.status).toBe(500);
     await expect(response.json()).resolves.toMatchObject({ errorCode: 'INTERNAL_ERROR' });
-    expect(mocks.byteStore.delete).toHaveBeenCalledWith(
-      expect.stringMatching(/^materials\/owner-1\/mat_/),
-    );
+    expect(mocks.removeServerAssetBytes).toHaveBeenCalledWith('owner-1', 'ast_owner_material');
     expect(mocks.abandonOwnerMaterial).toHaveBeenCalled();
-    expect(mocks.byteStore.delete.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(mocks.removeServerAssetBytes.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.abandonOwnerMaterial.mock.invocationCallOrder[0]!,
     );
   });
 
   it('keeps the reservation when byte cleanup fails after finalize fails', async () => {
     mocks.finalizeOwnerMaterial.mockRejectedValue(new Error('finalize failed'));
-    mocks.byteStore.delete.mockRejectedValue(new Error('delete failed'));
+    mocks.removeServerAssetBytes.mockRejectedValue(new Error('delete failed'));
     const response = await post(Buffer.from('hello'));
     expect(response.status).toBe(500);
     expect(mocks.abandonOwnerMaterial).not.toHaveBeenCalled();

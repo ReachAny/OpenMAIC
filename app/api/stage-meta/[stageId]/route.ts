@@ -25,7 +25,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
-import { resolveStageAccess } from '@/lib/server/stage-access';
+import { getStageAccessDb, resolveStageAccess } from '@/lib/server/stage-access';
 import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
 
 // Per-viewer and mutable on every publish/unpublish/delete: this response must
@@ -38,10 +38,11 @@ type Params = { params: Promise<{ stageId: string }> };
 export async function GET(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
-  return withRequestOwnerId(req, async (ownerId, responseHeaders) => {
+  return withRequestOwnerId(req, async (ownerId, responseHeaders, authorization) => {
+    const stage = authorization.grant.stage;
     const { stageId } = await params;
     try {
-      const access = await resolveStageAccess(stageId);
+      const access = await resolveStageAccess(stageId, await getStageAccessDb(stage));
 
       // Absent or tombstoned — indistinguishable, deliberately.
       if (!access) {

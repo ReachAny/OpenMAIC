@@ -14,6 +14,7 @@ import {
   Settings,
   Sun,
 } from 'lucide-react';
+import { OpenMaicPublishButton } from '@/components/reachacademy/openmaic-publish-button';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/lib/hooks/use-i18n';
 import { useTheme } from '@/lib/hooks/use-theme';
@@ -220,6 +221,12 @@ export function HeaderControls({
           host bar on the mode swap (no cross-bar layoutId morph: the
           playback Header and edit CommandBar have different left-side
           widths, so morphing made the pill visibly drift). */}
+      {/* Publish back to ReachAcademy. A course-level action, so it follows
+          `showCourseActions` — the workbench-attached classroom hides it, because
+          the Pro workspace hosts its own. Self-gating: renders nothing without a
+          writable draft grant, which is every standalone deployment. */}
+      {showCourseActions && <OpenMaicPublishButton variant={variant} />}
+
       {onToggleEditMode && (
         <label
           className={cn(

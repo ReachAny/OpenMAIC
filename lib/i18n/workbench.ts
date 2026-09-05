@@ -34,7 +34,26 @@ export const workbenchEn = {
   },
   launch: {
     createFailed: 'Could not create the task. Please try again.',
+    stageRequired: 'Open a course from ReachAcademy before starting a build.',
     unknownSkill: 'That skill is no longer available. Retrying without it.',
+    openMaicDeniedTitle: 'OpenMAIC course access is unavailable',
+    openMaicDeniedDescription:
+      'This course editing link has expired or is no longer authorized. Return to the course and open Edit again.',
+    openMaicRetry: 'Retry access',
+    openMaicBack: 'Back to course',
+  },
+  /**
+   * Publishing back to ReachAcademy. `unchanged` is a success, not a warning:
+   * republishing a draft nobody touched returns the version that already
+   * exists rather than minting a duplicate.
+   */
+  publish: {
+    action: 'Publish',
+    running: 'Publishing…',
+    done: 'Published v{{version}}',
+    unchanged: 'Already up to date',
+    failed: 'Publish failed',
+    hint: 'Copy this draft to the published course learners see.',
   },
   chat: {
     stopFailed: 'Could not stop. Please try again.',
@@ -360,7 +379,20 @@ export const workbenchZh = {
   common: { loading: '加载中', send: '发送', backToWorkspace: '返回工作台' },
   launch: {
     createFailed: '创建任务失败，请重试',
+    stageRequired: '请从 ReachAcademy 的课程模块进入后再开始构建。',
     unknownSkill: '这个 Skill 已不存在，正在移除它并重试',
+    openMaicDeniedTitle: '暂时无法打开 OpenMAIC 课程',
+    openMaicDeniedDescription: '课程编辑链接已过期或授权已失效。请返回课程后重新点击“编辑”。',
+    openMaicRetry: '重新获取授权',
+    openMaicBack: '返回课程',
+  },
+  publish: {
+    action: '发布',
+    running: '发布中…',
+    done: '已发布 v{{version}}',
+    unchanged: '草稿未变更',
+    failed: '发布失败',
+    hint: '把当前草稿复制为学生看到的已发布课程。',
   },
   chat: {
     stopFailed: '停止失败，请重试',

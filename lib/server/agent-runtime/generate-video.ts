@@ -1,7 +1,3 @@
-import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-
 import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { Type, type Static } from 'typebox';
 
@@ -24,7 +20,7 @@ import { createLogger } from '@/lib/logger';
 import { recordGenerationUsage } from '@/lib/server/usage-storage';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { readResponseBodyWithLimit } from '@/lib/server/bounded-download';
-import { CLASSROOMS_DIR } from '@/lib/server/classroom-storage';
+import { putServerAssetBytes } from '@/lib/server/server-asset-bytes';
 import type { CourseToolDeps } from './course-tools';
 import { COURSE_STAGE_ID_DESCRIPTION } from './course-stage';
 import { errorResult, MEDIA_TOOL_ERROR_REASONS } from './media-tool-result';
@@ -76,6 +72,7 @@ type GenerateConfiguredVideo = (
 interface PersistVideoInput {
   result: VideoGenerationResult;
   stageId: string;
+  assetPrincipal?: string;
   signal: AbortSignal;
 }
 
@@ -86,18 +83,15 @@ interface PersistedVideo {
 
 type PersistGeneratedVideo = (input: PersistVideoInput) => Promise<PersistedVideo>;
 
-export interface GenerateVideoToolDeps extends Pick<CourseToolDeps, 'sessionId' | 'abortSignal'> {
+export interface GenerateVideoToolDeps extends Pick<
+  CourseToolDeps,
+  'sessionId' | 'abortSignal' | 'assetPrincipal'
+> {
   getConfiguredVideoProviders?: () => Record<string, { models?: string[]; disabled?: boolean }>;
   resolveVideoProviderConfig?: (providerId: VideoProviderId) => VideoGenerationConfig;
   generateConfiguredVideo?: GenerateConfiguredVideo;
   persistGeneratedVideo?: PersistGeneratedVideo;
   timeoutMs?: number;
-}
-
-function extensionForVideoMime(mime: string): string {
-  if (mime === 'video/webm') return 'webm';
-  if (mime === 'video/quicktime') return 'mov';
-  return 'mp4';
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -154,6 +148,7 @@ async function fetchGeneratedVideo(url: string, signal: AbortSignal): Promise<Re
 export async function defaultPersistGeneratedVideo({
   result,
   stageId,
+  assetPrincipal,
   signal,
 }: PersistVideoInput): Promise<PersistedVideo> {
   throwIfAborted(signal);
@@ -174,17 +169,14 @@ export async function defaultPersistGeneratedVideo({
     throw new Error(`Generated video download returned unexpected content type: ${mime}`);
   }
   const bytes = await readResponseBodyWithLimit(response, { maxBytes: MAX_GENERATED_VIDEO_BYTES });
-  const hash = createHash('sha256').update(bytes).digest('hex');
-  throwIfAborted(signal);
-
-  const mediaDir = path.join(CLASSROOMS_DIR, stageId, 'media');
-  const filename = `generated-${hash}.${extensionForVideoMime(mime)}`;
-  await fs.mkdir(mediaDir, { recursive: true });
-  throwIfAborted(signal);
-  await fs.writeFile(path.join(mediaDir, filename), bytes);
-  throwIfAborted(signal);
   return {
-    src: `/api/classroom-media/${stageId}/media/${filename}`,
+    src: await putServerAssetBytes({
+      principal: assetPrincipal ?? '',
+      bytes,
+      mime,
+      meta: { stageId, source: 'agent-video' },
+      signal,
+    }),
     mime,
   };
 }
@@ -312,6 +304,7 @@ export function buildGenerateVideoTool(
         const stored = await persist({
           result,
           stageId,
+          assetPrincipal: deps.assetPrincipal,
           signal: ioSignal,
         });
         throwIfAborted(ioSignal);

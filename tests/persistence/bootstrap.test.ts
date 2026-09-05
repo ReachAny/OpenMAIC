@@ -35,8 +35,9 @@ describe('persistence client bootstrap', () => {
 
   it('configures runtime and document HTTP stores without wiring the asset pool', async () => {
     vi.stubEnv('NEXT_PUBLIC_PERSISTENCE', '1');
-    vi.stubEnv('NEXT_PUBLIC_PERSISTENCE_TOKEN', 'test-dev-token');
-    vi.stubGlobal('window', {});
+    vi.stubGlobal('window', {
+      location: { pathname: '/classroom/stage-1', search: '' },
+    });
     vi.stubGlobal('localStorage', memoryStorage());
 
     const { HttpDocumentStore } = await import('@openmaic/storage');
@@ -68,14 +69,60 @@ describe('persistence client bootstrap', () => {
         headersHook: (context: { method: string; path: string }) => Promise<HeadersInit>;
       }
     ).headersHook({ method: 'GET', path: '/runtime/sessions/example' });
-    expect(new Headers(runtimeHeaders).get('authorization')).toBe('Bearer test-dev-token');
-    expect(new Headers(runtimeHeaders).get('x-learner-key')).toMatch(/^anon:/);
+    expect(new Headers(runtimeHeaders)).toEqual(new Headers({ 'x-openmaic-stage-id': 'stage-1' }));
+    expect(new Headers(runtimeHeaders).has('authorization')).toBe(false);
+    expect(new Headers(runtimeHeaders).has('x-learner-key')).toBe(false);
 
     runtime.resetRuntimeStorageForTests();
     documents.resetDocumentStorageForTests();
     expect(runtime.isRuntimeStorageConfigured()).toBe(false);
     expect(documents.isDocumentStorageConfigured()).toBe(false);
     expect(assets.isAssetPoolStorageConfigured()).toBe(false);
+  });
+
+  it('binds Pro workbench persistence to the active course stage', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PERSISTENCE', '1');
+    vi.stubGlobal('window', {
+      location: { pathname: '/workspace', search: '?course=stage-pro-1' },
+    });
+    vi.stubGlobal('localStorage', memoryStorage());
+
+    const runtime = await import('@/lib/runtime/store');
+    const documents = await import('@/lib/document-store');
+    const runtimeStore = runtime.getRuntimeStore() as unknown as {
+      headersHook: (context: { method: string; path: string }) => Promise<HeadersInit>;
+    };
+    const documentStore = documents.getDocumentStore() as unknown as {
+      headersHook: (context: { method: string; path: string }) => Promise<HeadersInit>;
+    };
+
+    await expect(
+      runtimeStore.headersHook({ method: 'POST', path: '/runtime/stages/stage-pro-1/sessions' }),
+    ).resolves.toEqual({ 'x-openmaic-stage-id': 'stage-pro-1' });
+    await expect(
+      documentStore.headersHook({ method: 'PUT', path: '/documents/stage-pro-1' }),
+    ).resolves.toEqual({ 'x-openmaic-stage-id': 'stage-pro-1' });
+  });
+
+  it('binds the generation entry and its preview to the host-pinned stage', async () => {
+    vi.stubEnv('NEXT_PUBLIC_PERSISTENCE', '1');
+    vi.stubGlobal('window', {
+      location: { pathname: '/generation-preview', search: '?stageId=stage-gen-1' },
+    });
+    vi.stubGlobal('localStorage', memoryStorage());
+
+    const documents = await import('@/lib/document-store');
+    const documentStore = documents.getDocumentStore() as unknown as {
+      headersHook: (context: { method: string; path: string }) => Promise<HeadersInit>;
+    };
+
+    // The generation flow ends with a document write while still on
+    // `/generation-preview`. Without the stage id in that URL the write fails
+    // closed with OPENMAIC_STAGE_REQUIRED and the generated deck never reaches
+    // `openmaic_draft`, so the module has nothing to publish.
+    await expect(
+      documentStore.headersHook({ method: 'PUT', path: '/documents/stage-gen-1' }),
+    ).resolves.toEqual({ 'x-openmaic-stage-id': 'stage-gen-1' });
   });
 
   it('does not run client configuration during server module evaluation', async () => {

@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import {
+  assertReachAnyProviderAllowed,
   isServerConfiguredProvider,
   resolvePDFApiKey,
   resolvePDFBaseUrl,
@@ -10,9 +11,12 @@ import { documentArtifactToParsedPdfContent, extractDocument } from '@/lib/docum
 import { createLogger } from '@/lib/logger';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 const log = createLogger('Parse PDF');
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let pdfFileName: string | undefined;
   let resolvedProviderId: string | undefined;
   try {
@@ -40,6 +44,7 @@ export async function POST(req: NextRequest) {
     const effectiveProviderId = providerId || ('unpdf' as PDFProviderId);
     pdfFileName = pdfFile?.name;
     resolvedProviderId = effectiveProviderId;
+    assertReachAnyProviderAllowed('pdf', effectiveProviderId);
 
     // Managed providers are admin-owned: ignore any client-sent key/baseUrl.
     const managed = isServerConfiguredProvider('pdf', effectiveProviderId);
@@ -88,6 +93,9 @@ export async function POST(req: NextRequest) {
       `PDF parsing failed [provider=${resolvedProviderId ?? 'unknown'}, file="${pdfFileName ?? 'unknown'}"]:`,
       error,
     );
+    if (error instanceof Error && error.message.includes('not enabled by the ReachAny')) {
+      return apiError('PROVIDER_DISABLED', 403, error.message);
+    }
     return apiError('PARSE_FAILED', 500, error instanceof Error ? error.message : 'Unknown error');
   }
 }

@@ -19,6 +19,7 @@ import { buildAgent } from '@/lib/agent/runtime/build-agent';
 import { createCallLlmStreamFn } from '@/lib/agent/runtime/stream-fn';
 import { HOST_AGENT_LIFECYCLE as LIFECYCLE } from '@/lib/agent-runtime/lifecycle';
 import { createLogger } from '@/lib/logger';
+import { createOpenMaicJobAuthorizationManager } from '@/lib/reachacademy/bridge/job-authorization';
 import { parseCourseRefs, type CourseRef } from '@/lib/workbench/course-refs';
 import { parseElementRefs, type ElementRef } from '@/lib/workbench/element-refs';
 import type { Scene, SlideContent } from '@/lib/types/stage';
@@ -855,6 +856,8 @@ export interface AgentRunnerHandle {
 export interface RunContext {
   running: Map<string, { abort: AbortController }>;
   shuttingDown: boolean;
+  authorizeJob?: (jobId: string) => Promise<{ expiresAt: number }>;
+  authorizeMaterialJob?: (agentJobId: string, materialId: string) => Promise<void>;
 }
 
 function toFollowUp(message: AgentSessionUserMessage): FollowUpMessage {
@@ -907,6 +910,28 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
   let criticalWriteError: unknown;
   let entryWritesHealthy = true;
   let terminalFrameEmitted = false;
+  let authorizationAborted = false;
+  let authorizationExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+  const checkpointJobAuthorization = async (): Promise<void> => {
+    if (!ctx.authorizeJob) return;
+    try {
+      const lease = await ctx.authorizeJob(id);
+      if (!authorizationExpiryTimer) {
+        authorizationExpiryTimer = setTimeout(
+          () => {
+            authorizationAborted = true;
+            abort.abort(new Error('OpenMAIC job authorization expired'));
+          },
+          Math.max(0, lease.expiresAt - Date.now()),
+        );
+        authorizationExpiryTimer.unref?.();
+      }
+    } catch (error) {
+      authorizationAborted = true;
+      abort.abort(error);
+      throw error;
+    }
+  };
 
   const markLeaseLost = () => {
     leaseLost = true;
@@ -1087,6 +1112,9 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         }
       })
       .catch((error) => log.warn(`session ${id}: heartbeat failed`, error));
+    void checkpointJobAuthorization().catch((error) =>
+      log.warn(`session ${id}: authorization checkpoint failed`, error),
+    );
   }, config.heartbeatIntervalMs);
   heartbeatTimer.unref?.();
 
@@ -1129,6 +1157,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
   cancelPoll.unref?.();
 
   try {
+    await checkpointJobAuthorization();
     const recovery = await loadEntryHistory();
     const historyMessages = recovery.messages;
     const plan = planResume(historyMessages);
@@ -1293,6 +1322,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     const ownerScopedStore = (await getOwnerScopedDocumentStore(
       meta.ownerId,
       async (transaction) => {
+        await checkpointJobAuthorization();
         assertCurrentStageMutationActive();
         await store.assertActiveLease(id, WORKER_ID, attempt, transaction);
         assertCurrentStageMutationActive();
@@ -1342,6 +1372,7 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       stageAccess,
       onCheckpoint: (info) => emit(LIFECYCLE.checkpoint, info),
       sessionId: id,
+      assetPrincipal: meta.ownerId,
       abortSignal: abort.signal,
       getActiveSkill: () => activeSkill,
     });
@@ -1370,7 +1401,12 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
     // capability-gated web_search). The listing only feeds the prompt block;
     // the tools read through the same session-scoped store on each call.
     const materials = await listSessionMaterials(id);
-    const materialTools = buildMaterialTools({ sessionId: id });
+    const materialTools = buildMaterialTools({
+      sessionId: id,
+      authorizeExtraction: ctx.authorizeMaterialJob
+        ? (materialId) => ctx.authorizeMaterialJob!(id, materialId)
+        : undefined,
+    });
     // Session-scoped registered voices: register_voice appends here, and
     // list_voices / set_roster (roster-tools) read the same array, so a cloned
     // voice stays bindable within the session that registered it (in-session
@@ -1407,34 +1443,36 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       id,
     );
     const tools = assembleRunnerTools(
-      [askUserTool],
-      webSearchTools,
+      'teacher.agent-authoring',
+      checkpointJobAuthorization,
+      { surface: 'control', tools: [askUserTool] },
+      { surface: 'model', tools: webSearchTools },
       // ownerId is captured from the claimed durable session. It is deliberately
       // absent from the model-visible parameters, so the model cannot forge a
       // target owner.
-      [buildCreateSkillTool(meta.ownerId)],
+      { surface: 'skill', tools: [buildCreateSkillTool(meta.ownerId)] },
       // read_skill / patch_skill close the loop create_skill opens. Registered
       // unconditionally rather than gated on "the user already has Skills": a
       // Skill created earlier IN THIS RUN is not in `installedSkills` (loaded
       // once at start), and a tool that appears only on the next run would be a
       // capability the model cannot discover when it needs it.
-      buildSkillEditTools(meta.ownerId),
+      { surface: 'skill', tools: buildSkillEditTools(meta.ownerId) },
       // The native `read` tool is restricted to installed skill resources; it is
       // present exactly when skills exist. Discovery and invocation stay pi-native.
-      skillReadTool ? [skillReadTool] : [],
+      { surface: 'skill', tools: skillReadTool ? [skillReadTool] : [] },
       // fetch_url is registered unconditionally (reference semantics: the
       // material tools are always registered alongside the capability-gated
       // web_search). The URL trust gate — not registration — is what keeps a
       // fetch inside the session's observed origins, and it is the tool's core
       // security property.
-      [buildFetchUrlTool({ sessionId: id })],
-      dslTools,
-      curriculumTools,
-      scenePreviewTools,
-      materialTools,
-      rosterTools,
-      voiceCloneTools,
-      personalHistoryTools,
+      { surface: 'model', tools: [buildFetchUrlTool({ sessionId: id })] },
+      { surface: 'document', tools: dslTools },
+      { surface: 'document', tools: curriculumTools },
+      { surface: 'document', tools: scenePreviewTools },
+      { surface: 'material', tools: materialTools },
+      { surface: 'document', tools: rosterTools },
+      { surface: 'model', tools: voiceCloneTools },
+      { surface: 'control', tools: personalHistoryTools },
     );
     const askUserLatch = createAskUserTerminateLatch();
     let toolCalls = 0;
@@ -1744,11 +1782,16 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       }
 
       cancelRequestedAt ??= await store.getCancelRequestedAt(id);
-      const settledCancelled = cancelled || cancelRequestedAt !== null;
+      const settledCancelled = cancelled || cancelRequestedAt !== null || authorizationAborted;
       if (settledCancelled) abort.abort();
       const error = !settledCancelled && loopError ? loopError : undefined;
       const status = settledCancelled ? 'cancelled' : error ? 'failed' : 'succeeded';
-      emit(LIFECYCLE.sessionEnd, { status, toolCalls, ...(error ? { error } : {}) });
+      emit(LIFECYCLE.sessionEnd, {
+        status,
+        toolCalls,
+        ...(authorizationAborted ? { reason: 'authorization_expired' } : {}),
+        ...(error ? { error } : {}),
+      });
       await flushAll();
       const settled = await store.finishSession(id, WORKER_ID, {
         status,
@@ -1783,16 +1826,21 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
         await flushAll(false);
         if (!leaseLost) await store.releaseLease(id, WORKER_ID);
       } else {
+        const status = authorizationAborted ? 'cancelled' : 'failed';
         if (!terminalFrameEmitted) {
-          emit(LIFECYCLE.sessionEnd, { status: 'failed', error: message });
+          emit(LIFECYCLE.sessionEnd, {
+            status,
+            error: message,
+            ...(authorizationAborted ? { reason: 'authorization_expired' } : {}),
+          });
         }
         await flushAll(false);
         const settled = await store.finishSession(id, WORKER_ID, {
-          status: 'failed',
+          status,
           error: message,
           expectedAttempt: attempt,
         });
-        if (settled) await requeueIfUndelivered('run failure');
+        if (settled && !authorizationAborted) await requeueIfUndelivered('run failure');
         log.error(`session ${id} failed`, error);
       }
     } finally {
@@ -1813,21 +1861,27 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
       }
       if (!leaseLost) await store.releaseLease(id, WORKER_ID).catch(() => {});
     } else {
+      const status = authorizationAborted ? 'cancelled' : 'failed';
       if (!terminalFrameEmitted) {
-        emit(LIFECYCLE.sessionEnd, { status: 'failed', error: message });
+        emit(LIFECYCLE.sessionEnd, {
+          status,
+          error: message,
+          ...(authorizationAborted ? { reason: 'authorization_expired' } : {}),
+        });
       }
       await flushAll(false).catch(() => {});
       const settled = await store
         .finishSession(id, WORKER_ID, {
-          status: 'failed',
+          status,
           error: message,
           expectedAttempt: attempt,
         })
         .catch(() => false);
-      if (settled) await requeueIfUndelivered('setup failure');
+      if (settled && !authorizationAborted) await requeueIfUndelivered('setup failure');
     }
     log.error(`session ${id} failed during setup`, error);
   } finally {
+    if (authorizationExpiryTimer) clearTimeout(authorizationExpiryTimer);
     clearInterval(heartbeatTimer);
     clearInterval(cancelPoll);
     unsubscribeWakeup();
@@ -1839,7 +1893,25 @@ export async function runSession(ctx: RunContext, meta: ClaimedAgentSession): Pr
 
 /** Start scanning. Store/schema construction remains lazy behind each scan. */
 export function startAgentRunner(): AgentRunnerHandle {
-  const ctx: RunContext = { running: new Map(), shuttingDown: false };
+  const jobAuthorization = createOpenMaicJobAuthorizationManager();
+  const ctx: RunContext = {
+    running: new Map(),
+    shuttingDown: false,
+    authorizeJob: async (jobId) => {
+      const checkpoint = await jobAuthorization.checkpoint('agent', jobId);
+      return { expiresAt: checkpoint.lease.expiresAt };
+    },
+    authorizeMaterialJob: async (agentJobId, materialId) => {
+      const agent = await jobAuthorization.checkpoint('agent', agentJobId);
+      await jobAuthorization.create({
+        sessionId: agent.lease.sessionId,
+        stageId: agent.lease.stageId,
+        jobKind: 'material',
+        jobId: materialId,
+        jobProfile: 'teacher.material-extract',
+      });
+    },
+  };
   let scanTimer: ReturnType<typeof setInterval> | null = null;
   let scanning = false;
 

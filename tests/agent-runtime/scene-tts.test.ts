@@ -60,8 +60,8 @@ describe('scene TTS capability routing', () => {
     // playable on any deployment origin.
     expect(target.actions?.[0]).toMatchObject({
       audioId: '/api/classroom-media/stage-a/media/tts-speech-a-abc123.mp3',
-      audioUrl: '/api/classroom-media/stage-a/media/tts-speech-a-abc123.mp3',
     });
+    expect(target.actions?.[0]).not.toHaveProperty('audioUrl');
     expect(mocks.persist).toHaveBeenCalledWith(
       expect.objectContaining({ stageId: 'stage-a', mime: 'audio/mpeg' }),
     );

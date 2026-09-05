@@ -11,11 +11,11 @@ import { makeDocument, makeSlideScene } from './_stage-fixtures';
  * — the flag AND a DATABASE_URL — so an enabled-but-unconfigured runtime
  * answers the same clean 404 as a disabled one, never a 500 from a store that
  * cannot connect. This suite drives the REAL feature-flag predicates from the
- * environment (no feature-flags mock) across the three environment states:
+ * environment (no feature-flags mock) across database-readiness states:
  *
- *   - flag off, no DATABASE_URL  -> routes 404 (the no-DB default)
- *   - flag on,  no DATABASE_URL  -> routes 404 (NOT 500)
- *   - flag on,  DATABASE_URL set -> routes serve
+ *   - no DATABASE_URL              -> routes 404 (the no-DB default)
+ *   - legacy flag, no DATABASE_URL -> routes 404 (NOT 500)
+ *   - DATABASE_URL set             -> routes serve regardless of the retired flag
  *
  * The store seams are mocked (same facades as the per-route suites), so the
  * "serves" row is exercised hermetically. A future route added to the wrong
@@ -43,6 +43,17 @@ const mocks = vi.hoisted(() => ({
     put: vi.fn(),
     remove: vi.fn(),
   },
+}));
+
+vi.mock('@/lib/reachacademy/bridge/route-auth', () => ({
+  requireOpenMaicRoute: vi.fn(async () => ({ authorization: { principal: 'owner-1' } })),
+}));
+vi.mock('@/lib/reachacademy/bridge/guard', () => ({
+  authorizeOpenMaicRequest: vi.fn(async () => ({
+    principal: 'owner-1',
+    grant: { coursePrincipal: 'owner-1' },
+  })),
+  openMaicAuthorizationResponse: vi.fn(() => new Response('denied', { status: 401 })),
 }));
 
 vi.mock('@/lib/server/agent-runtime/owner', () => ({
@@ -99,6 +110,7 @@ interface RouteCase {
   call: () => Promise<Response>;
   /** The status the route must return when the runtime is configured. */
   happyStatus: number;
+  alwaysRetired?: boolean;
 }
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
@@ -305,6 +317,7 @@ const ROUTES: RouteCase[] = [
         params(STAGE_ID),
       ),
     happyStatus: 200,
+    alwaysRetired: true,
   },
   {
     name: 'POST /api/stages/[id]/unpublish',
@@ -314,6 +327,7 @@ const ROUTES: RouteCase[] = [
         params(STAGE_ID),
       ),
     happyStatus: 200,
+    alwaysRetired: true,
   },
 ];
 
@@ -334,8 +348,8 @@ const STATES: EnvState[] = [
   },
   { label: 'flag on, no DATABASE_URL', runtimeFlag: 'true', databaseUrl: undefined, serves: false },
   {
-    label: 'flag on, DATABASE_URL present',
-    runtimeFlag: 'true',
+    label: 'retired flag off, DATABASE_URL present',
+    runtimeFlag: undefined,
     databaseUrl: 'postgres://runtime',
     serves: true,
   },
@@ -446,7 +460,9 @@ for (const state of STATES) {
 
     it.each(ROUTES.map((route) => [route.name, route] as const))('%s', async (_name, route) => {
       const response = await route.call();
-      if (state.serves) {
+      if (route.alwaysRetired) {
+        expect(response.status).toBe(404);
+      } else if (state.serves) {
         expect(response.status).toBe(route.happyStatus);
       } else {
         // The 404 must come from the gate, before any owner/store work —

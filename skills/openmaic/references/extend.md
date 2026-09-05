@@ -30,7 +30,7 @@ This reference takes priority over the `accessCode` auto-shortcut in Phase 0: if
 
 所以 fork 里的 token 红叉**只来自命中触发条件的 push**，PR 不会产生；普通 feature 分支推送不匹配触发条件则整个 workflow 都不跑。是否禁用取决于你的 fork 工作流：会往 main 推命中触发的改动就禁用（或去掉触发），否则不用管；纯本地自用、从不 push 同样无需处理。误发版本身已被 environment + token 闸门挡死，不用担心。
 
-**改完代码后运行 / 验证：** 启动方式同 [startup-modes.md](startup-modes.md)，key 同 [provider-keys.md](provider-keys.md)，用 `GET {url}/api/health` 验证，UI / 路由改动在浏览器确认。若你改动了 `packages/@openmaic/*` 的**源码**，要先重建对应包的 `dist/`（消费方解析的是 `dist/` 不是 `src/`；依赖顺序 `dsl → generation → storage → importer → renderer → editor`，`pnpm install` 的 postinstall 已按此顺序构建，单包可用各自 `pnpm run build`）。
+**改完代码后运行 / 验证：** ReachAcademy 启动方式同仓库开发技能（不使用 Docker 或 browser token），用 `GET {url}/api/health` 验证 liveness，并用 `GET {url}/api/ready` 验证部署 catalog/Redis/import readiness；UI / 路由改动在浏览器确认。若你改动了 `packages/@openmaic/*` 的**源码**，要先重建对应包的 `dist/`（消费方解析的是 `dist/` 不是 `src/`；依赖顺序 `dsl → generation → storage → importer → renderer → editor`，`pnpm install` 的 postinstall 已按此顺序构建，单包可用各自 `pnpm run build`）。
 
 ## Route To The Right Sub-Reference
 

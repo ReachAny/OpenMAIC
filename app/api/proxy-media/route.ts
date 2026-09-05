@@ -15,12 +15,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { apiError } from '@/lib/server/api-response';
 import { createLogger } from '@/lib/logger';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 const log = createLogger('ProxyMedia');
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const auth = await requireOpenMaicRoute(request);
+  if ('response' in auth) return auth.response;
   let url: string | undefined;
   try {
     ({ url } = await request.json());

@@ -17,6 +17,7 @@ import type { StageLinkLifecycleData } from '@/lib/agent-runtime/lifecycle';
 
 import type { AppDocumentOutline } from '@/lib/document-store/persistence-types';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { stageConnectionString } from '@/lib/persistence/stage-routing';
 import type { CourseDocument, CourseStore } from './course-tools';
 import { folderIdForCall, stageIdForCall } from './course-stage';
 import { mergeStageOutline } from './course-outline-union';
@@ -57,7 +58,11 @@ export async function probeStageAccess(
   queryable?: Queryable,
 ): Promise<StageAccess> {
   const db = (queryable ??
-    (await getServerPersistenceProvider(process.env.DATABASE_URL ?? '')).pool) as Queryable;
+    (
+      await getServerPersistenceProvider(
+        stageConnectionString(process.env.DATABASE_URL ?? '', 'draft'),
+      )
+    ).pool) as Queryable;
   const rows = await db.query<StageProbeRow>(
     `SELECT meta.owner_id, meta.deleted_at, stages.name
        FROM stage_meta AS meta

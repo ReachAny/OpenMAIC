@@ -10,8 +10,8 @@ import { WorkbenchLaunchBridge } from './client';
 
 export const dynamic = 'force-dynamic';
 
-export default function WorkbenchNewCompatibilityPage() {
-  if (!isWorkbenchEntryEnabled()) notFound();
+export default async function WorkbenchNewCompatibilityPage() {
+  if (!(await isWorkbenchEntryEnabled())) notFound();
 
   return (
     <Suspense fallback={null}>

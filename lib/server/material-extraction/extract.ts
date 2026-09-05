@@ -38,6 +38,7 @@ export interface MaterialExtractionExecutionDependencies {
   putText?: (sessionId: string, text: Buffer) => Promise<string>;
   putBytes?: (sessionId: string, bytes: Buffer, mime: string) => Promise<string>;
   complete?: (input: CompleteMaterialExtractionInput) => Promise<boolean>;
+  checkpoint?: () => Promise<void>;
 }
 
 function artifactText(artifact: DocumentArtifact): string {
@@ -99,6 +100,8 @@ export async function extractClaimedSessionMaterial(
   dependencies: MaterialExtractionExecutionDependencies = {},
 ): Promise<{ materialId: string; text: string; extractorVersion: string }> {
   const source = claim.material;
+  const checkpoint = dependencies.checkpoint ?? (async () => undefined);
+  await checkpoint();
   if (!source.rawAssetId) throw new Error(`source material ${source.id} has no raw asset`);
   const resolveSource = dependencies.resolveSource ?? defaultResolveSource;
   const raw = await resolveSource(source.sessionId, source.rawAssetId);
@@ -128,6 +131,7 @@ export async function extractClaimedSessionMaterial(
         ...mediaInput,
         config: { ...mediaInput.config, providerId: selected.id },
       });
+      await checkpoint();
     } catch (error) {
       throw new MaterialExtractionError(
         error instanceof Error ? error.message : String(error),
@@ -142,6 +146,7 @@ export async function extractClaimedSessionMaterial(
         false,
       );
     }
+    await checkpoint();
     const textAssetId = await (dependencies.putText ?? defaultPutText)(
       source.sessionId,
       Buffer.from(text, 'utf8'),
@@ -152,6 +157,7 @@ export async function extractClaimedSessionMaterial(
     for (const asset of artifact.assets ?? []) {
       if (asset.type !== 'image' || !asset.data) continue;
       const bytes = Buffer.from(asset.data, 'base64');
+      await checkpoint();
       const rawAssetId = await putBytes(source.sessionId, bytes, asset.mimeType ?? 'image/webp');
       images.push({
         id: createMaterialId(),
@@ -163,6 +169,7 @@ export async function extractClaimedSessionMaterial(
     const store = dependencies.complete ? undefined : await getAgentSessionMaterialStore();
     const complete = dependencies.complete ?? store!.completeExtraction.bind(store);
     const extractorVersion = `${selected.id}@${selected.version}`;
+    await checkpoint();
     const completed = await complete({
       sourceId: source.id,
       workerId: claim.workerId,
@@ -216,6 +223,7 @@ export async function extractClaimedSessionMaterial(
           allowEnvFallback: true,
         },
       });
+      await checkpoint();
       selected = provider;
       break;
     } catch (error) {
@@ -232,11 +240,13 @@ export async function extractClaimedSessionMaterial(
 
   const text = artifactText(artifact);
   const bytes = Buffer.from(text, 'utf8');
+  await checkpoint();
   const textAssetId = await (dependencies.putText ?? defaultPutText)(source.sessionId, bytes);
   const derivativeId = createMaterialId();
   const store = dependencies.complete ? undefined : await getAgentSessionMaterialStore();
   const complete = dependencies.complete ?? store!.completeExtraction.bind(store);
   const extractorVersion = `${selected.id}@${selected.version}`;
+  await checkpoint();
   const completed = await complete({
     sourceId: source.id,
     workerId: claim.workerId,

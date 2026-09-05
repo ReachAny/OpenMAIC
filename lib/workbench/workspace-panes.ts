@@ -23,7 +23,17 @@
 
 export const WORKSPACE_SESSION_PARAM = 'session';
 export const WORKSPACE_COURSE_PARAM = 'course';
+/** Optional launch context retained while pane state changes. */
+export const WORKSPACE_STAGE_PARAM = 'stageId';
+export const WORKSPACE_MODE_PARAM = 'mode';
 export const WORKSPACE_PATH = '/workspace';
+
+export type WorkspaceContextMode = 'edit' | 'playback';
+
+export interface WorkspaceContext {
+  readonly stageId: string | null;
+  readonly mode: WorkspaceContextMode | null;
+}
 
 export interface WorkspacePanes {
   /** The attached agent session, or null. */
@@ -77,6 +87,15 @@ export function readWorkspacePanes(search: ParamReader): WorkspacePanes {
   };
 }
 
+/** Read the launch context without making it part of pane identity. */
+export function readWorkspaceContext(search: ParamReader): WorkspaceContext {
+  const rawMode = readParam(search, WORKSPACE_MODE_PARAM);
+  return {
+    stageId: readParam(search, WORKSPACE_STAGE_PARAM),
+    mode: rawMode === 'edit' || rawMode === 'playback' ? rawMode : null,
+  };
+}
+
 /**
  * The canonical URL for a pane state. Param order is fixed (session, then
  * course) so the same layout always produces the same string — a `router`
@@ -91,6 +110,37 @@ export function workspaceHref(panes: WorkspacePanes): string {
     parts.push(`${WORKSPACE_COURSE_PARAM}=${encodeURIComponent(panes.courseId)}`);
   }
   return parts.length === 0 ? WORKSPACE_PATH : `${WORKSPACE_PATH}?${parts.join('&')}`;
+}
+
+/**
+ * Attach the launch context to ANY in-app href, not just `/workspace`.
+ *
+ * The context is what makes a page stage-aware: client persistence and the
+ * generation routes both derive `x-openmaic-stage-id` from the URL, so a
+ * navigation that drops `stageId` silently downgrades every subsequent write
+ * on the destination page. Every hop the host launch can reach — home →
+ * generation → classroom → Pro workspace and back — therefore carries it.
+ *
+ * The path may already have a query; existing params are preserved and the two
+ * context params are set (not appended), so repeated hops cannot accumulate
+ * duplicates.
+ */
+export function hrefWithWorkspaceContext(path: string, context: WorkspaceContext): string {
+  const [pathname, existing] = path.split('?');
+  const params = new URLSearchParams(existing ?? '');
+  if (context.stageId) params.set(WORKSPACE_STAGE_PARAM, context.stageId);
+  if (context.mode) params.set(WORKSPACE_MODE_PARAM, context.mode);
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
+/**
+ * Serialize pane state while retaining the originating classroom context.
+ * Context is deliberately separate from `WorkspacePanes`: it must survive
+ * pane switches, but should not affect layout equality or tab semantics.
+ */
+export function workspaceHrefWithContext(panes: WorkspacePanes, context: WorkspaceContext): string {
+  return hrefWithWorkspaceContext(workspaceHref(panes), context);
 }
 
 export type WorkspaceLayout = 'home' | 'session' | 'course' | 'both';

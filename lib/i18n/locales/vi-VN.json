@@ -992,6 +992,8 @@
     "deleteFolderConfirmRemove": "Thao tác này xóa thư mục cùng các bài học bên trong, gồm cả lịch sử trò chuyện.",
     "notFound": "Không tìm thấy khóa học",
     "notFoundDesc": "Khóa học này không tồn tại hoặc đã bị xóa.",
+    "authorizationRequired": "Không thể mở khóa học OpenMAIC",
+    "authorizationRequiredDesc": "Phiên đăng nhập hoặc quyền khóa học đã hết hạn. Hãy vào lại từ Teacher.",
     "backToHome": "Về trang chủ"
   },
   "upload": {

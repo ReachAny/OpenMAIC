@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { createLogger } from '@/lib/logger';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { apiError, apiSuccess } from '@/lib/server/api-response';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 const log = createLogger('Azure Voices');
 
 export const maxDuration = 30;
@@ -11,6 +12,8 @@ export const maxDuration = 30;
  * Fetches available voices from Azure Speech Services
  */
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let baseUrl: string | undefined;
   try {
     const body = await req.json();

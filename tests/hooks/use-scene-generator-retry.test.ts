@@ -475,4 +475,38 @@ describe('browser scene generation retry wrappers', () => {
       expect.objectContaining({ id: 'ast_stable_audio', format: 'wav' }),
     );
   });
+
+  /**
+   * The bridge guard treats a generation request with no stage header as
+   * "any grant will do" and picks the most recently issued one. A browser
+   * session holding two courses would then write generated media under the
+   * wrong course principal, which only surfaces later as a missing asset at
+   * publication time.
+   */
+  it('binds generation requests to the stage the page is on', async () => {
+    vi.stubGlobal('window', {
+      location: { pathname: '/generation-preview', search: '?stageId=stage-gen-1' },
+    });
+    try {
+      const { fetchSceneContent } = await import('@/lib/hooks/use-scene-generator');
+      mockFetch.mockResolvedValue(jsonResponse(200, { success: true, content: { elements: [] } }));
+
+      await fetchSceneContent(
+        {
+          outline,
+          allOutlines: [outline],
+          stageId: 'stage-gen-1',
+          stageInfo: { name: 'Bound Course' },
+        },
+        undefined,
+        retryOptions,
+      );
+
+      const headers = new Headers(mockFetch.mock.calls[0]?.[1]?.headers as HeadersInit);
+      expect(headers.get('x-openmaic-stage-id')).toBe('stage-gen-1');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.stubGlobal('fetch', mockFetch);
+    }
+  });
 });

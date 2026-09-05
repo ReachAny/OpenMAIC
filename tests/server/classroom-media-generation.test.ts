@@ -3,6 +3,15 @@ import { replaceMediaPlaceholders } from '@/lib/server/classroom-media-generatio
 import type { Scene } from '@/lib/types/stage';
 import type { SceneOutline } from '@/lib/types/generation';
 
+const assetMocks = vi.hoisted(() => ({
+  put: vi.fn(
+    async (input: { meta?: { stageId?: string; source?: string } }) =>
+      `ast_${input.meta?.stageId}_${input.meta?.source}`,
+  ),
+}));
+
+vi.mock('@/lib/server/server-asset-bytes', () => ({ putServerAssetBytes: assetMocks.put }));
+
 // The media pipeline writes generated files to disk; intercept the writes so
 // the test never touches the worktree. Everything else (including the YAML
 // provider-config read) delegates to the real fs.
@@ -132,9 +141,45 @@ describe('generateMediaForClassroom model fallback', () => {
     ] as unknown as SceneOutline[];
 
     await expect(
-      generateMediaForClassroom(outlines, 'cls-disabled', 'http://localhost'),
+      generateMediaForClassroom(outlines, 'cls-disabled', 'http://localhost', 'course-principal'),
     ).resolves.toEqual({});
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('fails closed in managed mode when the model catalog is empty', async () => {
+    vi.stubEnv('REACHANY_MODEL_BASE_URL', 'https://model-service.example.test');
+    vi.stubEnv('REACHANY_OPENMAIC_SERVICE_TOKEN', 'managed-token');
+    vi.stubEnv('OPENAI_API_KEY', 'sk-openai');
+    vi.resetModules();
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { generateMediaForClassroom } = await import('@/lib/server/classroom-media-generation');
+    const outlines = [
+      {
+        id: 'outline_managed_empty',
+        type: 'slide',
+        title: 'Scene',
+        description: 'd',
+        order: 1,
+        mediaGenerations: [{ type: 'image', prompt: 'a cat', elementId: 'gen_img_managed' }],
+      },
+    ] as unknown as SceneOutline[];
+
+    await expect(
+      generateMediaForClassroom(
+        outlines,
+        'cls-managed-empty',
+        'http://localhost',
+        'course-principal',
+      ),
+    ).resolves.toEqual({});
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([url]) => String(url).includes('/v1/models'))).toBe(true);
   });
 
   test('falls back to the first catalog image model when the server pins no models', async () => {
@@ -170,11 +215,14 @@ describe('generateMediaForClassroom model fallback', () => {
       },
     ] as unknown as SceneOutline[];
 
-    const mediaMap = await generateMediaForClassroom(outlines, 'cls-fallback', 'http://localhost');
-
-    expect(mediaMap['gen_img_1']).toBe(
-      'http://localhost/api/classroom-media/cls-fallback/media/gen_img_1.png',
+    const mediaMap = await generateMediaForClassroom(
+      outlines,
+      'cls-fallback',
+      'http://localhost',
+      'course-principal',
     );
+
+    expect(mediaMap['gen_img_1']).toBe('ast_cls-fallback_classroom-image');
     const genBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(genBody.model).toBe('doubao-seedream-5-0-260128');
   });
@@ -210,7 +258,7 @@ describe('generateMediaForClassroom model fallback', () => {
       },
     ] as unknown as SceneOutline[];
 
-    await generateMediaForClassroom(outlines, 'cls-pinned', 'http://localhost');
+    await generateMediaForClassroom(outlines, 'cls-pinned', 'http://localhost', 'course-principal');
 
     const genBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(genBody.model).toBe('pinned-a');
@@ -262,15 +310,14 @@ describe('generateMediaForClassroom model fallback', () => {
       outlines,
       'cls-video-fallback',
       'http://localhost',
+      'course-principal',
     );
     // Seedance submits a task then polls on a 5s interval; advance the fake
     // timers past the first poll so the mocked success response is consumed.
     await vi.advanceTimersByTimeAsync(5_000);
     const mediaMap = await mediaMapPromise;
 
-    expect(mediaMap['gen_vid_1']).toBe(
-      'http://localhost/api/classroom-media/cls-video-fallback/media/gen_vid_1.mp4',
-    );
+    expect(mediaMap['gen_vid_1']).toBe('ast_cls-video-fallback_classroom-video');
     const genBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(genBody.model).toBe('doubao-seedance-2-0-260128');
   });
@@ -319,13 +366,12 @@ describe('generateMediaForClassroom model fallback', () => {
       outlines,
       'cls-video-pinned',
       'http://localhost',
+      'course-principal',
     );
     await vi.advanceTimersByTimeAsync(5_000);
     const mediaMap = await mediaMapPromise;
 
-    expect(mediaMap['gen_vid_2']).toBe(
-      'http://localhost/api/classroom-media/cls-video-pinned/media/gen_vid_2.mp4',
-    );
+    expect(mediaMap['gen_vid_2']).toBe('ast_cls-video-pinned_classroom-video');
     const genBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(genBody.model).toBe('pinned-video-a');
   });

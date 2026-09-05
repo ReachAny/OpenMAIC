@@ -8,8 +8,8 @@
  * branch's agent-session materials stay session-scoped (the agent tools' list
  * surface); this table is the owner's durable library that the uploader feeds.
  *
- * Bytes live in the neutral material byte store. The row records its private
- * object key, matching the reference metadata shape without vendor storage.
+ * Bytes live in the PostgreSQL asset pool under the owner's personal
+ * principal. The row records its private `ast_` object id.
  *
  * ## Upload lifecycle
  *
@@ -250,7 +250,7 @@ export async function reclaimStaleOwnerMaterialUploads(
   deleteBytes: (ossKey: string) => Promise<void>,
 ): Promise<void> {
   const staleBefore = Date.now() - STALE_UPLOAD_AGE_MS;
-  const stale = await queryable.query<{ id: string; oss_key: string }>(
+  const stale = await queryable.query<{ id: string; oss_key: string | null }>(
     `SELECT id, oss_key
        FROM owner_material
       WHERE owner_id = $1
@@ -259,7 +259,7 @@ export async function reclaimStaleOwnerMaterialUploads(
     [ownerId, staleBefore],
   );
   for (const row of stale.rows) {
-    if (row.oss_key !== '') {
+    if (row.oss_key) {
       try {
         await deleteBytes(row.oss_key);
       } catch {
@@ -359,6 +359,24 @@ export async function finalizeOwnerMaterial(
   );
   if (!result.rows[0]) throw new Error(`material ${materialId} cannot be finalized`);
   return rowToRecord(result.rows[0]);
+}
+
+/** Attach the PG asset-pool id after the upload bytes have been committed. */
+export async function updateOwnerMaterialObjectKey(
+  queryable: Queryable,
+  materialId: string,
+  ossKey: string,
+): Promise<void> {
+  const result = await queryable.query<{ id: string }>(
+    `UPDATE owner_material
+        SET oss_key = $2
+      WHERE id = $1 AND status = 'uploading' AND deleted_at IS NULL
+      RETURNING id`,
+    [materialId, ossKey],
+  );
+  if (result.rows.length !== 1) {
+    throw new Error(`material ${materialId} cannot attach its asset id`);
+  }
 }
 
 /** Remove a failed reservation; crash leftovers are handled by the 24h lazy sweep. */

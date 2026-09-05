@@ -40,6 +40,7 @@ import { resolveModelFromRequest } from '@/lib/server/resolve-model';
 import { sortDocumentImagesForVision } from '@/lib/document/bundle';
 import { resolveVisionImagesForPrompt } from '@/lib/persistence/resolve-vision-images';
 import { resolveVocationalActive } from '@/lib/config/feature-flags';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 const log = createLogger('Outlines Stream');
 
 export const maxDuration = 300;
@@ -285,6 +286,8 @@ function ensureUniqueOutlineId(outline: SceneOutline, usedIds: Set<string>): Sce
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   let requirementSnippet: string | undefined;
   let resolvedModelString: string | undefined;
   try {

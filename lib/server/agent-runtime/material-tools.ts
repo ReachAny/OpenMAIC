@@ -89,6 +89,7 @@ export interface MaterialToolDependencies {
   /** Test seam; defaults to asset-registry text resolution scoped to the session. */
   readTextAsset?: (sessionId: string, textAssetId: string) => Promise<Buffer | null>;
   enqueueExtraction?: (sessionId: string, materialId: string) => Promise<boolean>;
+  authorizeExtraction?: (materialId: string) => Promise<void>;
   waitPollIntervalMs?: number;
   waitForDelay?: (milliseconds: number) => Promise<void>;
   now?: () => number;
@@ -525,6 +526,8 @@ export function buildMaterialTools(deps: MaterialToolDependencies): AgentTool<ne
       if (record.kind !== 'source')
         throw new Error('extract_material only accepts source materials.');
       if (record.extraction.status === 'idle' || record.extraction.status === 'failed') {
+        await deps.authorizeExtraction?.(record.id);
+        throwIfAborted(signal);
         const changed = await enqueueExtraction(deps.sessionId, record.id);
         throwIfAborted(signal);
         if (changed) {

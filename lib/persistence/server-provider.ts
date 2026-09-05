@@ -1,6 +1,6 @@
-import { PgAssetStore, ensureAssetSchema } from '@openmaic/storage/asset/pg';
-import { PgDocumentStore, ensureDocumentSchema } from '@openmaic/storage/document/pg';
-import { PgRuntimeStore, ensureSchema } from '@openmaic/storage/runtime/pg';
+import { PgAssetStore } from '@openmaic/storage/asset/pg';
+import { PgDocumentStore } from '@openmaic/storage/document/pg';
+import { PgRuntimeStore } from '@openmaic/storage/runtime/pg';
 import {
   nodePostgresTransaction,
   type ConnectableQueryable,
@@ -9,8 +9,8 @@ import { Pool } from 'pg';
 
 import { validateAppScene, validateAppStage } from '@/lib/document-store/validators';
 import { lazyAssetByteStore } from '@/lib/persistence/asset-byte-store';
-import { ensureOwnerMaterialSchema } from '@/lib/persistence/owner-materials';
-import { ensureStageMetaSchema } from '@/lib/persistence/stage-meta';
+import { assertOpenMaicCatalogReady } from '@/lib/persistence/catalog-readiness';
+import { schemaFromStageConnectionString } from '@/lib/persistence/stage-routing';
 import { APP_RUNTIME_PAYLOAD_VALIDATORS } from '@/lib/runtime/payload-validators';
 
 export type PersistencePoolFactory = (connectionString: string) => Pool;
@@ -23,15 +23,14 @@ export interface ServerPersistenceProvider {
 }
 
 interface ProviderState {
-  connectionString?: string;
-  providerPromise?: Promise<ServerPersistenceProvider>;
+  providers: Map<string, Promise<ServerPersistenceProvider>>;
 }
 
 const PROVIDER_STATE_KEY = Symbol.for('openmaic.persistence.provider');
 const globalState = globalThis as typeof globalThis & {
   [key: symbol]: ProviderState | undefined;
 };
-const providerState = (globalState[PROVIDER_STATE_KEY] ??= {});
+const providerState = (globalState[PROVIDER_STATE_KEY] ??= { providers: new Map() });
 
 async function createServerPersistenceProvider(
   connectionString: string,
@@ -40,11 +39,12 @@ async function createServerPersistenceProvider(
   const pool = poolFactory(connectionString);
   const queryable = pool as unknown as ConnectableQueryable;
   try {
-    await ensureSchema(queryable);
-    await ensureDocumentSchema(queryable);
-    await ensureStageMetaSchema(queryable);
-    await ensureOwnerMaterialSchema(queryable);
-    await ensureAssetSchema(queryable);
+    const schema = schemaFromStageConnectionString(connectionString);
+    if (!schema) throw new Error('OpenMAIC persistence requires an explicit grant-derived schema');
+    if (process.env.ASSET_S3_BUCKET?.trim()) {
+      throw new Error('ReachAcademy stage persistence does not support ASSET_S3_BUCKET');
+    }
+    await assertOpenMaicCatalogReady(queryable, schema);
     const withTransaction = nodePostgresTransaction(queryable);
     const byteStore = lazyAssetByteStore(process.env.ASSET_S3_BUCKET, queryable);
     return {
@@ -71,20 +71,28 @@ export function getServerPersistenceProvider(
   connectionString: string,
   poolFactory: PersistencePoolFactory = (value) => new Pool({ connectionString: value }),
 ): Promise<ServerPersistenceProvider> {
-  if (providerState.providerPromise && providerState.connectionString === connectionString) {
-    return providerState.providerPromise;
-  }
+  const existing = providerState.providers.get(connectionString);
+  if (existing) return existing;
 
-  providerState.connectionString = connectionString;
   const initialization = createServerPersistenceProvider(connectionString, poolFactory).catch(
     (error) => {
-      if (providerState.providerPromise === initialization) {
-        providerState.providerPromise = undefined;
-        providerState.connectionString = undefined;
+      if (providerState.providers.get(connectionString) === initialization) {
+        providerState.providers.delete(connectionString);
       }
       throw error;
     },
   );
-  providerState.providerPromise = initialization;
+  providerState.providers.set(connectionString, initialization);
   return initialization;
+}
+
+export async function closeServerPersistenceProviders(): Promise<void> {
+  const providers = [...providerState.providers.values()];
+  providerState.providers.clear();
+  await Promise.all(
+    providers.map(async (provider) => {
+      const resolved = await provider.catch(() => null);
+      await resolved?.pool.end().catch(() => {});
+    }),
+  );
 }

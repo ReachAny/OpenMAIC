@@ -13,7 +13,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createWorkbenchSession } from '@/lib/workbench/session-store';
+import { createWorkbenchSession, WorkbenchApiError } from '@/lib/workbench/session-store';
 import type { CourseRef } from '@/lib/workbench/course-refs';
 
 const REF: CourseRef = { kind: 'course', stageId: 'stage-1', title: '光的折射' };
@@ -78,5 +78,24 @@ describe('creating a session with a named classroom', () => {
     stubFetch(created());
     const meta = await createWorkbenchSession({ prompt: 'p' });
     expect(meta.courseRefsAccepted).toBe(true);
+  });
+
+  it('normalizes nested authorization failures instead of stringifying their object payload', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json(
+          { error: { code: 'OPENMAIC_STAGE_REQUIRED', message: 'request denied' } },
+          { status: 400 },
+        ),
+      ),
+    );
+
+    await expect(createWorkbenchSession({ prompt: 'p' })).rejects.toMatchObject({
+      name: 'WorkbenchApiError',
+      message: 'request denied',
+      status: 400,
+      errorCode: 'OPENMAIC_STAGE_REQUIRED',
+    } satisfies Partial<WorkbenchApiError>);
   });
 });

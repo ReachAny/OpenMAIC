@@ -84,6 +84,7 @@ import {
   openCourseTabs,
   parseChatWidth,
   parseCollapsed,
+  readWorkspaceContext,
   readWorkspacePanes,
   resolveWorkspaceRender,
   restoreCourseTabs,
@@ -106,6 +107,8 @@ import type { ElementRef } from '@/lib/workbench/element-refs';
 import type { CourseRef } from '@/lib/workbench/course-refs';
 import { useStageFreshnessSync, useWorkbenchStream } from '@/lib/workbench/use-workbench-session';
 import { useGeneratedCourseDiscoverySync } from '@/lib/workbench/course-discovery-sync';
+import { useOpenMaicHostReturnUrl } from '@/lib/reachacademy/use-openmaic-host-return';
+import { standaloneClassroomHref } from '@/lib/workbench/classroom-exit';
 import { useStageStore } from '@/lib/store/stage';
 import { WorkspaceRail } from './WorkspaceRail';
 import { WorkspaceHome } from './WorkspaceHome';
@@ -190,6 +193,12 @@ function WorkspaceShellController({ initialPanes }: { readonly initialPanes: Wor
   const chatWidth = useChatWidth();
 
   const panes = navigation.panes;
+  // The launch context outlives pane changes (see `readWorkspaceContext`), so the host return
+  // target stays resolvable even after the teacher closes the course they arrived on. Read from
+  // Next's param reader rather than the pane state: History API writes keep it current, and it is
+  // the same source `useWorkspacePaneNavigation` preserves the context through.
+  const launchStageId = readWorkspaceContext(useSearchParams()).stageId;
+  const hostReturnUrl = useOpenMaicHostReturnUrl(panes.courseId ?? launchStageId);
   useEffect(() => {
     if (panes.sessionId) rememberWorkspaceSession(panes.sessionId);
   }, [panes.sessionId]);
@@ -559,7 +568,16 @@ function WorkspaceShellController({ initialPanes }: { readonly initialPanes: Wor
   // lockup stays fixed. `startProSwap` falls back to a plain push where the
   // browser has no View Transitions or the user asked for less motion, and
   // swallows a second click while one swap is already running.
-  const exitPro = () => startProSwap('/', (href) => router.push(href));
+  const exitPro = () => {
+    // A hosted launch has no OpenMAIC home behind it: with no course open, leaving Pro means
+    // leaving the app, back to the ReachAcademy page the teacher came from.
+    if (!panes.courseId && hostReturnUrl) {
+      globalThis.location.assign(hostReturnUrl);
+      return;
+    }
+    const href = panes.courseId ? standaloneClassroomHref(panes.courseId, playbackOn) : '/';
+    startProSwap(href, (nextHref) => router.push(nextHref));
+  };
   /**
    * Back to the bare workspace: both panes dropped, the composer refocused.
    *

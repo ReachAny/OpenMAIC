@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  assertReachAnyProviderAllowed,
+  isReachAnyManagedOnlyDeployment,
   isServerConfiguredProvider,
   resolveManagedAliDocMindCredentials,
   resolvePDFApiKey,
@@ -25,6 +27,7 @@ import {
 import { apiError, apiSuccess } from '@/lib/server/api-response';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
 import { MAX_EXTRACT_DOCUMENT_FILE_SIZE_BYTES } from '@/lib/constants/generation';
+import { requireOpenMaicRoute } from '@/lib/reachacademy/bridge/route-auth';
 
 // The asset-id path resolves bytes from the server asset store, which lives in
 // the PostgreSQL persistence backend; it needs the Node runtime, not the edge.
@@ -223,6 +226,19 @@ async function runExtraction(
   isAssetIdForm: boolean,
 ) {
   const { fileName, fileSize, mimeType, buffer } = source;
+
+  if (isReachAnyManagedOnlyDeployment()) {
+    if (SUPPORTED_MEDIA_MIME_TYPES.includes(mimeType)) {
+      return apiError(
+        'PROVIDER_DISABLED',
+        403,
+        'Media extraction is not enabled by the ReachAny server',
+      );
+    }
+    const requestedProvider = requestConfig.providerId || 'reachany';
+    assertReachAnyProviderAllowed('pdf', requestedProvider);
+    requestConfig = { ...requestConfig, providerId: requestedProvider };
+  }
 
   // Media (audio/video) takes the media extraction path → MediaArtifact,
   // flattened to the same text shape documents produce. Same route, same
@@ -438,6 +454,8 @@ async function runExtraction(
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireOpenMaicRoute(req);
+  if ('response' in auth) return auth.response;
   const logState: ExtractLogState = {};
   // Whether this request took the asset-id (JSON) form. The multipart byte
   // form's observable behavior is frozen; a few JSON-path-only responses use

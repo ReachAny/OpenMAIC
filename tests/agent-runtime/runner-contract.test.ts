@@ -3,16 +3,42 @@ import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { assembleRunnerTools } from '@/lib/server/agent-runtime/runner-contract';
 
 function tool(name: string): AgentTool {
-  return { name, description: `tool-${name}` } as unknown as AgentTool;
+  return {
+    name,
+    label: name,
+    description: `tool-${name}`,
+    execute: async () => ({ content: [] }),
+  } as unknown as AgentTool;
 }
 
 describe('assembleRunnerTools', () => {
-  it('flattens tool groups into a single runner tool list, preserving order', () => {
-    const tools = assembleRunnerTools([tool('a'), tool('b')], [], [tool('c')]);
+  it('filters by the code-owned profile and preserves group order', () => {
+    const tools = assembleRunnerTools(
+      'teacher.material-extract',
+      async () => undefined,
+      { surface: 'control', tools: [tool('a')] },
+      { surface: 'document', tools: [tool('denied')] },
+      { surface: 'material', tools: [tool('b')] },
+      { surface: 'asset', tools: [tool('c')] },
+    );
     expect(tools.map((t) => t.name)).toEqual(['a', 'b', 'c']);
   });
 
-  it('returns an empty list when no groups are given', () => {
-    expect(assembleRunnerTools()).toEqual([]);
+  it('checkpoints immediately before and after every registered call', async () => {
+    const checkpoints: string[] = [];
+    const executed = tool('write');
+    executed.execute = async () => {
+      checkpoints.push('execute');
+      return { content: [], details: {} };
+    };
+    const [wrapped] = assembleRunnerTools(
+      'teacher.agent-authoring',
+      async () => {
+        checkpoints.push('checkpoint');
+      },
+      { surface: 'skill', tools: [executed] },
+    );
+    await wrapped!.execute('call', {} as never);
+    expect(checkpoints).toEqual(['checkpoint', 'execute', 'checkpoint']);
   });
 });

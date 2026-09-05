@@ -22,10 +22,9 @@
  * the stream. Native `EventSource` then reconnects with `Last-Event-ID` and
  * resumes through the same replay path without losing durable events.
  *
- * Access model: there is no per-route auth challenge. Every request is
- * granted an anonymous cookie identity, and every store read is scoped to
- * that identity. A session owned by another identity is indistinguishable
- * from a missing one — both are 404 with the same response.
+ * Access model: every request is authorized by the ReachAcademy bridge before
+ * the store is read. A session owned by another identity or stage is
+ * indistinguishable from a missing one — both are 404 with the same response.
  *
  * This handler is a pure READER of the store. A disconnect closes this
  * reader and nothing else: the runner keeps running, and its events keep
@@ -36,8 +35,11 @@ import type { NextRequest } from 'next/server';
 
 import { HOST_AGENT_LIFECYCLE as LIFECYCLE } from '@/lib/agent-runtime/lifecycle';
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
+import {
+  authorizeOpenMaicRequest,
+  openMaicAuthorizationResponse,
+} from '@/lib/reachacademy/bridge/guard';
 import { subscribeAgentEventWakeup } from '@/lib/server/agent-runtime/event-notify-bus';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 
 export const runtime = 'nodejs';
@@ -65,21 +67,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
   const { id } = await params;
   const responseHeaders = new Headers();
-  // The identity cookie is minted for the requester regardless of the target
-  // session, and the owner is resolved before the session lookup: a request
-  // for a missing session and one for a session owned by someone else return
-  // byte-identical 404s (same status, body, and cookie headers), so the
-  // response cannot be used to probe whether a session UUID exists. This
-  // slice resolves only the anonymous cookie identity; a future auth
-  // integration must thread `authenticatedOwnerId` through here, or sessions
-  // created under authenticated identities would be unreachable by their own
-  // owner.
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
   const store = await getAgentSessionStore();
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(req, {
+      stageId: req.nextUrl.searchParams.get('stageId'),
+      allowAnyStageGrant: !req.nextUrl.searchParams.has('stageId'),
+    });
+  } catch (error) {
+    return openMaicAuthorizationResponse(error);
+  }
   const meta = await store.getSession(id);
   if (!meta) {
     return new Response('Not found', { status: 404, headers: responseHeaders });
   }
+  if (meta.stageId !== authorization.grant.stageId) {
+    return new Response('Not found', { status: 404, headers: responseHeaders });
+  }
+  const ownerId = authorization.grant.personalPrincipal;
   if (meta.ownerId !== ownerId) {
     return new Response('Not found', { status: 404, headers: responseHeaders });
   }
@@ -91,6 +96,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const encoder = new TextEncoder();
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  let grantExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribeWakeup: (() => void) | null = null;
   // Hoisted so cancel() can stop an in-flight-then-scheduled poll, not just
   // the timer: after a client disconnect, `closed` makes every later poll a
@@ -100,8 +106,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const clearTimers = () => {
     if (pollTimer) clearTimeout(pollTimer);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (grantExpiryTimer) clearTimeout(grantExpiryTimer);
     pollTimer = null;
     heartbeatTimer = null;
+    grantExpiryTimer = null;
     unsubscribeWakeup?.();
     unsubscribeWakeup = null;
   };
@@ -132,6 +140,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           return false;
         }
       };
+
+      grantExpiryTimer = setTimeout(
+        () => {
+          if (closed) return;
+          write(
+            `event: authorization_expired\ndata: ${JSON.stringify({
+              type: 'authorization_expired',
+              stageId: authorization.grant.stageId,
+              action: 'renew_and_reconnect',
+              cursor,
+            })}\n\n`,
+          );
+          closed = true;
+          clearTimers();
+          try {
+            controller.close();
+          } catch {
+            // The client disconnected at the expiry boundary.
+          }
+        },
+        Math.max(0, authorization.grant.expiresAt - Date.now()),
+      );
+      grantExpiryTimer.unref?.();
 
       // "You are caught up" is a real, named SSE event, not a comment: a
       // client attaching during a long tool call would otherwise sit on
@@ -294,7 +325,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
 
   responseHeaders.set('Content-Type', 'text/event-stream; charset=utf-8');
-  responseHeaders.set('Cache-Control', 'no-cache, no-transform');
+  responseHeaders.set('Cache-Control', 'private, no-store');
   responseHeaders.set('Connection', 'keep-alive');
   return new Response(stream, { headers: responseHeaders });
 }

@@ -1,8 +1,8 @@
 import { NextRequest } from 'next/server';
 
 import { settleWhiteboardVisibility } from '@/lib/chat/pi/whiteboard-visibility';
-import { authenticatePersistenceHeaders } from '@/lib/persistence/server-auth';
 import { apiError } from '@/lib/server/api-response';
+import { authorizeOpenMaicRequest } from '@/lib/reachacademy/bridge/guard';
 
 export const runtime = 'nodejs';
 
@@ -29,11 +29,6 @@ function validBody(value: unknown): value is {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
-  const principal = authenticatePersistenceHeaders(req.headers);
-  if (!principal?.learnerKey) {
-    return apiError('INVALID_CREDENTIALS', 401, 'Invalid persistence development binding');
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -43,11 +38,17 @@ export async function POST(req: NextRequest): Promise<Response> {
   if (!validBody(body)) {
     return apiError('INVALID_REQUEST', 400, 'Invalid whiteboard visibility response');
   }
+  let authorization;
+  try {
+    authorization = await authorizeOpenMaicRequest(req, { stageId: body.stageId });
+  } catch {
+    return apiError('INVALID_CREDENTIALS', 401, 'Request denied');
+  }
 
   if (
     !settleWhiteboardVisibility({
       ...body,
-      learnerKey: principal.learnerKey,
+      learnerKey: authorization.grant.learnerKey,
     })
   ) {
     return apiError('INVALID_REQUEST', 404, 'Whiteboard visibility query is not pending here');

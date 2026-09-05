@@ -20,8 +20,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   readWorkspacePanes,
+  readWorkspaceContext,
   samePanes,
-  workspaceHref,
+  workspaceHrefWithContext,
   type WorkspacePanes,
 } from '@/lib/workbench/workspace-panes';
 
@@ -40,7 +41,11 @@ export function useWorkspacePaneNavigation(initialPanes: WorkspacePanes): Worksp
     panesRef.current = next;
     setPanes(next);
 
-    const href = workspaceHref(next);
+    // Keep the originating stage/mode context through pane-only URL writes.
+    // These params are not pane identity, but are required when the user
+    // entered Pro from a stage-bound classroom and later returns to it.
+    const context = readWorkspaceContext(new URLSearchParams(window.location.search));
+    const href = workspaceHrefWithContext(next, context);
     if (mode === 'push') window.history.pushState(null, '', href);
     else window.history.replaceState(null, '', href);
   }, []);

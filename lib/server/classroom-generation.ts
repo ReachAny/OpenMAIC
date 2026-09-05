@@ -1,4 +1,4 @@
-import { nanoid } from 'nanoid';
+import { resolveStageId } from '@/lib/stage-id';
 import { callLLM } from '@/lib/ai/llm';
 import { createStageAPI } from '@/lib/api/stage-api';
 import type { StageStore } from '@/lib/api/stage-api-types';
@@ -26,7 +26,6 @@ import { resolveVocationalActive } from '@/lib/config/feature-flags';
 import { buildSearchQuery } from '@/lib/server/search-query-builder';
 import { formatSearchResultsAsContext, searchWeb } from '@/lib/web-search';
 import type { BaiduSubSources, WebSearchProviderId } from '@/lib/web-search/types';
-import { persistClassroom } from '@/lib/server/classroom-storage';
 import {
   generateMediaForClassroom,
   replaceMediaPlaceholders,
@@ -36,6 +35,7 @@ import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
 import type { UserRequirements } from '@/lib/types/generation';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
+import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 
 const log = createLogger('Classroom');
 
@@ -47,6 +47,8 @@ export function containPBLGenerationError(error: unknown, sceneTitle: string): n
 
 export interface GenerateClassroomInput {
   requirement: string;
+  /** Stage id pinned by an embedding host; a local one is minted when absent. */
+  requestedStageId?: string;
   pdfContent?: { text: string; images: string[] };
   enableWebSearch?: boolean;
   webSearchProviderId?: WebSearchProviderId;
@@ -177,10 +179,16 @@ export async function generateClassroom(
   input: GenerateClassroomInput,
   options: {
     baseUrl: string;
+    coursePrincipal?: string;
     onProgress?: (progress: ClassroomGenerationProgress) => Promise<void> | void;
+    checkpoint?: () => Promise<unknown>;
   },
 ): Promise<GenerateClassroomResult> {
   const { requirement, pdfContent } = input;
+
+  if (!options.coursePrincipal) {
+    throw new Error('OpenMAIC classroom generation requires an authorized course principal');
+  }
 
   await options.onProgress?.({
     step: 'initializing',
@@ -519,7 +527,7 @@ export async function generateClassroom(
     agents = getDefaultAgents();
   }
 
-  const stageId = nanoid(10);
+  const stageId = resolveStageId(input.requestedStageId);
   const stage: Stage = {
     id: stageId,
     name: courseTitle || outlines[0]?.title || requirement.slice(0, 50),
@@ -549,8 +557,8 @@ export async function generateClassroom(
         }),
   };
 
-  const store = createInMemoryStore(stage);
-  const api = createStageAPI(store);
+  const stageStore = createInMemoryStore(stage);
+  const api = createStageAPI(stageStore);
 
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = 0;
@@ -656,7 +664,7 @@ export async function generateClassroom(
     });
   }
 
-  const scenes = store.getState().scenes;
+  const scenes = stageStore.getState().scenes;
   log.info(`Pipeline complete: ${scenes.length} scenes generated`);
 
   if (scenes.length === 0) {
@@ -674,7 +682,12 @@ export async function generateClassroom(
     });
 
     try {
-      const mediaMap = await generateMediaForClassroom(outlines, stageId, options.baseUrl);
+      const mediaMap = await generateMediaForClassroom(
+        outlines,
+        stageId,
+        options.baseUrl,
+        options.coursePrincipal,
+      );
       replaceMediaPlaceholders(scenes, mediaMap);
       log.info(`Media generation complete: ${Object.keys(mediaMap).length} files`);
     } catch (err) {
@@ -693,7 +706,7 @@ export async function generateClassroom(
     });
 
     try {
-      await generateTTSForClassroom(scenes, stageId, options.baseUrl);
+      await generateTTSForClassroom(scenes, stageId, options.baseUrl, options.coursePrincipal);
       log.info('TTS generation complete');
     } catch (err) {
       log.warn('TTS generation phase failed, continuing:', err);
@@ -708,14 +721,18 @@ export async function generateClassroom(
     totalScenes: outlines.length,
   });
 
-  const persisted = await persistClassroom(
-    {
-      id: stageId,
-      stage,
-      scenes,
-    },
-    options.baseUrl,
-  );
+  await options.checkpoint?.();
+  const documentStore = await getOwnerScopedDocumentStore(options.coursePrincipal, async () => {
+    await options.checkpoint?.();
+  });
+  await documentStore.saveDocument({ stage, scenes, outline: outlines });
+  const persisted = {
+    id: stageId,
+    stage,
+    scenes,
+    createdAt: new Date().toISOString(),
+    url: `${options.baseUrl}/classroom/${stageId}`,
+  };
 
   log.info(`Classroom persisted: ${persisted.id}, URL: ${persisted.url}`);
 
