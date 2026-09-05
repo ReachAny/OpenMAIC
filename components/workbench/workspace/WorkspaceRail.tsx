@@ -2241,7 +2241,6 @@ function HomeLink({
   readonly className?: string;
   readonly children: ReactNode;
 }) {
-  const { t } = useI18n();
   return (
     <a
       href={href}
