@@ -1434,6 +1434,8 @@ function TreeGroundDrop({
   readonly active: boolean;
   readonly dropProps: Record<string, unknown>;
 }) {
+  const { t } = useI18n();
+
   return (
     <div
       data-testid="pro-nav-tree-ground-drop"
@@ -2074,6 +2076,8 @@ function SessionDot({ status }: { readonly status: ProHomeSessionItem['status'] 
  * notifications.
  */
 function RailUtilities({ onOpenSettings }: { readonly onOpenSettings: () => void }) {
+  const { t } = useI18n();
+
   return (
     <div className="shrink-0" data-testid="pro-rail-utilities">
       <div className="ws-seam-rail mx-4" aria-hidden="true" />
